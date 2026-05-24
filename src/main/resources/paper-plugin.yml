@@ -22,3 +22,12 @@ permissions:
   litematica.admin:
     description: Bypass region checks (worldguard, plotsquared)
     default: op
+  litematica.protocol.use:
+    description: Talk to the Servux-compatible custom payload channels
+    default: false
+  litematica.protocol.paste:
+    description: Stream a .litematic via the Servux paste protocol
+    default: false
+  litematica.protocol.easyplace:
+    description: Use Easy Place V3 over the LitematicaFolia protocol channel
+    default: false

@@ -8,7 +8,7 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~05:05 — P1a + P1b + P1c + P1d + P1e landed)
+## State (last tick: 2026-05-24 ~05:15 — P1a + P1b + P1c + P1d + P1e + P2 landed)
 
 ### Done
 - [x] `admin_ekaii/litematica-folia-ekaii` repo created on forgejo.ekaii.fr
@@ -64,8 +64,47 @@ Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prom
   - All output via Adventure `Component` with GREEN (info/success) / YELLOW (warning) / RED (error) / GOLD (header) / AQUA (filenames)
   - `./gradlew compileJava` GREEN (verified after staging out parallel P2 WIP)
 
+- [x] **P2 — Servux-compatible network channel** (tick 2026-05-24 ~05:15)
+  - `protocol/ProtocolConstants.java` — channel names + Servux verbatim packet IDs
+    (Litematics: S2C_METADATA=1, C2S_METADATA_REQUEST=2, C2S_BLOCK_ENTITY_REQUEST=3,
+    C2S_ENTITY_REQUEST=4, S2C_BLOCK_NBT_REPLY=5, S2C_ENTITY_NBT_REPLY=6,
+    C2S_BULK_NBT_REQUEST=7, NBT_STREAM_START/DATA=10-13; Structures 1-12)
+    + LitematicaFolia-vendor `litematicafolia:easy_place` (1=request, 2=ack)
+  - `protocol/ProtocolBuffer.java` — VarInt / String / BlockPos (packed long) /
+    ChunkPos / NBT (anonymous-root 1.20.2+ network form) reader & writer, pure Java
+  - `protocol/ServuxBridge.java` — enable / disable / isEnabled; uses Paper
+    `Messenger` plugin-channel API (not raw Netty pipeline injection — simpler +
+    Folia-safe); gated by `protocol.enableServuxBridge` (default false)
+  - `protocol/PacketHandler.java` — VarInt-typed dispatcher across the 3 channels,
+    base-gate permission check, build* helpers for replies
+  - `protocol/handler/MetadataHandler.java` — handshake: emits NBT compound with
+    `name`, `id`, `version=1` (Servux compat), `servux`, `ServerVersion`,
+    `ProtocolVersion=3`, `Capabilities=[easy_place_v3, direct_paste, structure_bbox]`
+    + stubbed BE/Entity/Bulk replies (TODO: NMS-backed real BE serialisation)
+  - `protocol/handler/EasyPlaceHandler.java` — V3 place request: read packed
+    BlockPos + state string + optional item NBT + hit-vec + facing + reqId;
+    dispatches to `FoliaCompat.runOnRegion` → `block.setBlockData()`; ACKs
+    success / reason; doc'd anti-cheat note (server-driven blocks not seen as
+    player placements by anti-grief)
+  - `protocol/handler/DirectPasteHandler.java` — splitter-aware: STREAM_START
+    captures header NBT, STREAM_DATA accumulates slices (first slice has
+    leading VarInt total length), on completion builds `LitematicSchematic`
+    via `LitematicReader.fromCompound` then **reuses `PasteOperation`** for
+    placement; reads origin + paste options from NBT
+  - `protocol/handler/StructureBboxHandler.java` — register / unregister /
+    spawn metadata stubs (real bbox enumeration left as TODO; needs NMS
+    StructureManager access)
+  - Permissions: `litematica.protocol.use` / `.paste` / `.easyplace` — all
+    `default: false` in plugin.yml + paper-plugin.yml
+  - `LitematicaFolia#onEnable()` wires `ServuxBridge.enable(this)` after
+    command registration; cleanup in `onDisable()`
+  - **8 round-trip JUnit tests green** (`protocol/ProtocolFormatTest.java`):
+    VarInt, String UTF-8, BlockPos, ChunkPos, NBT compound, null NBT,
+    EasyPlaceRequest byte-equality after decode→encode, item-NBT variant
+  - `./gradlew compileJava` GREEN; full test suite **34 tests pass**
+  - Open TODOs marked in code with `// TODO smoke-test with vanilla Litematica client`
+
 ### In flight / next
-- [ ] **P2 Servux protocol** — in flight in parallel (untracked WIP in `protocol/`); currently breaks `compileJava` (missing handler classes); not part of P1d scope
 - [ ] **P1d v2** — `save` to capture TE/entities/pending-ticks (currently blocks-only; documented TODO)
 - [ ] **Re-run smoke harness** with P1d commands jar
 - [ ] **P3 FAWE adapter** — on hold (`mvn.intellectualsites.com` NXDOMAIN)

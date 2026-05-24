@@ -1,0 +1,157 @@
+package fr.ekaii.litematica.protocol;
+
+import fr.ekaii.litematica.protocol.handler.DirectPasteHandler;
+import fr.ekaii.litematica.protocol.handler.EasyPlaceHandler;
+import fr.ekaii.litematica.protocol.handler.MetadataHandler;
+import fr.ekaii.litematica.protocol.handler.StructureBboxHandler;
+import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
+
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+/**
+ * Central dispatcher for inbound custom-payload packets across all
+ * Servux-compatible channels. Decodes the leading VarInt packet type and
+ * routes to the appropriate handler.
+ *
+ * <p>This class plays the role of the Netty handler the task brief asks
+ * for — but using Paper's plugin-messaging API instead of raw Netty
+ * pipeline injection. Same shape: decode → dispatch → encode reply.
+ */
+public final class PacketHandler {
+
+    private static final Logger LOG = Logger.getLogger("LitematicaFolia/PacketHandler");
+
+    /** Top-level "litematica.protocol.use" permission gating any payload at all. */
+    public static final String PERM_USE       = "litematica.protocol.use";
+    public static final String PERM_PASTE     = "litematica.protocol.paste";
+    public static final String PERM_EASYPLACE = "litematica.protocol.easyplace";
+
+    private final Plugin plugin;
+    private final MetadataHandler metadata;
+    private final EasyPlaceHandler easyPlace;
+    private final DirectPasteHandler directPaste;
+    private final StructureBboxHandler structures;
+
+    public PacketHandler(Plugin plugin,
+                         MetadataHandler metadata,
+                         EasyPlaceHandler easyPlace,
+                         DirectPasteHandler directPaste,
+                         StructureBboxHandler structures) {
+        this.plugin = plugin;
+        this.metadata = metadata;
+        this.easyPlace = easyPlace;
+        this.directPaste = directPaste;
+        this.structures = structures;
+    }
+
+    // ------------------------------------------------------------- entrypoints
+
+    /** Called by {@link ServuxBridge} for every {@code servux:litematics} payload. */
+    public void onLitematicsPacket(String channel, Player player, byte[] payload) {
+        if (!checkBaseGate(player)) return;
+        try {
+            ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
+            int type = r.readVarInt();
+            switch (type) {
+                case ProtocolConstants.Litematics.C2S_METADATA_REQUEST ->
+                    metadata.onMetadataRequest(player, r);
+                case ProtocolConstants.Litematics.C2S_BLOCK_ENTITY_REQUEST ->
+                    metadata.onBlockEntityRequest(player, r);
+                case ProtocolConstants.Litematics.C2S_ENTITY_REQUEST ->
+                    metadata.onEntityRequest(player, r);
+                case ProtocolConstants.Litematics.C2S_BULK_NBT_REQUEST ->
+                    metadata.onBulkRequest(player, r);
+                case ProtocolConstants.Litematics.C2S_NBT_STREAM_START,
+                     ProtocolConstants.Litematics.C2S_NBT_STREAM_DATA ->
+                    directPaste.onStreamFrame(player, type, r);
+                default -> LOG.warning("unknown servux:litematics packet type " + type
+                        + " from " + player.getName());
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "decode servux:litematics for " + player.getName(), t);
+        }
+    }
+
+    public void onStructuresPacket(String channel, Player player, byte[] payload) {
+        if (!checkBaseGate(player)) return;
+        try {
+            ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
+            int type = r.readVarInt();
+            switch (type) {
+                case ProtocolConstants.Structures.C2S_REGISTER ->
+                    structures.onRegister(player, r);
+                case ProtocolConstants.Structures.C2S_UNREGISTER ->
+                    structures.onUnregister(player, r);
+                case ProtocolConstants.Structures.C2S_REQUEST_SPAWN_METADATA ->
+                    structures.onSpawnMetadataRequest(player, r);
+                default -> LOG.warning("unknown servux:structures packet type " + type);
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "decode servux:structures for " + player.getName(), t);
+        }
+    }
+
+    public void onEasyPlacePacket(String channel, Player player, byte[] payload) {
+        if (!checkBaseGate(player)) return;
+        if (!player.hasPermission(PERM_EASYPLACE) && !player.isOp()) {
+            LOG.fine("easyplace denied: " + player.getName() + " lacks " + PERM_EASYPLACE);
+            return;
+        }
+        try {
+            ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
+            int type = r.readVarInt();
+            if (type == ProtocolConstants.EasyPlace.C2S_PLACE_REQUEST) {
+                easyPlace.onPlaceRequest(player, r);
+            } else {
+                LOG.warning("unknown easy_place packet type " + type);
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "decode easy_place for " + player.getName(), t);
+        }
+    }
+
+    // ------------------------------------------------- shared encode helpers
+
+    /**
+     * Builds a Litematics-channel payload by writing the type VarInt then
+     * delegating to {@code body} to fill the rest.
+     */
+    public static byte[] buildLitematics(int type, ByteWriter body) throws Exception {
+        ProtocolBuffer.Writer w = new ProtocolBuffer.Writer();
+        w.writeVarInt(type);
+        body.write(w);
+        return w.toByteArray();
+    }
+
+    /** Same for the structures channel. */
+    public static byte[] buildStructures(int type, ByteWriter body) throws Exception {
+        ProtocolBuffer.Writer w = new ProtocolBuffer.Writer();
+        w.writeVarInt(type);
+        body.write(w);
+        return w.toByteArray();
+    }
+
+    /** Same for the easy-place channel. */
+    public static byte[] buildEasyPlace(int type, ByteWriter body) throws Exception {
+        ProtocolBuffer.Writer w = new ProtocolBuffer.Writer();
+        w.writeVarInt(type);
+        body.write(w);
+        return w.toByteArray();
+    }
+
+    @FunctionalInterface
+    public interface ByteWriter {
+        void write(ProtocolBuffer.Writer w) throws Exception;
+    }
+
+    // ---------------------------------------------------- permission gating
+
+    private boolean checkBaseGate(Player player) {
+        if (player == null) return false;
+        if (player.isOp()) return true;
+        if (player.hasPermission(PERM_USE)) return true;
+        return false;
+    }
+}
