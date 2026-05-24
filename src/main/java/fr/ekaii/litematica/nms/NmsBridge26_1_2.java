@@ -28,10 +28,12 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.storage.TagValueOutput;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.craftbukkit.CraftWorld;
+import org.bukkit.craftbukkit.entity.CraftEntity;
 
 import java.util.LinkedHashMap;
 import java.util.logging.Logger;
@@ -185,31 +187,141 @@ public final class NmsBridge26_1_2 implements NmsBridge {
     }
 
     // ------------------------------------------------------------------ Extraction (save v2)
-    // Interface surface added 2026-05-24. Real NMS impl deferred (the save-v2
-    // agent hit a session limit before implementing). Stubs keep the build
-    // green and the contract honest — `/litematica save` continues to fall
-    // back to blocks-only.
+    // 2026-05-24: real NMS impl. saveWithFullMetadata(HolderLookup.Provider)
+    // is the canonical capture API on 26.1.2 for BlockEntities; Entity#save
+    // takes a ValueOutput in 26.1.2 (TagValueOutput.createWithContext builds
+    // one against a problem reporter + registry access).
 
     @Override
     public LitematicNbt.NbtTag extractTileEntityNbt(World world, int x, int y, int z) {
-        LOG.warning("extractTileEntityNbt: NMS impl pending (save-v2 deferred); falling back to blocks-only.");
-        return null;
+        try {
+            ServerLevel level = ((CraftWorld) world).getHandle();
+            BlockPos pos = new BlockPos(x, y, z);
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be == null) return null;
+            CompoundTag ct;
+            try {
+                ct = be.saveWithFullMetadata(level.registryAccess());
+            } catch (Throwable t) {
+                if (!FoliaThreadException.isFoliaThreadException(t)) throw t;
+                LOG.warning("extractTileEntityNbt skipped (wrong region thread): " + t.getMessage());
+                return null;
+            }
+            return fromNmsCompound(ct);
+        } catch (Throwable t) {
+            if (FoliaThreadException.isFoliaThreadException(t)) {
+                LOG.warning("extractTileEntityNbt skipped (wrong region thread): " + t.getMessage());
+                return null;
+            }
+            LOG.log(java.util.logging.Level.WARNING, "extractTileEntityNbt failed", t);
+            return null;
+        }
     }
 
     @Override
     public LitematicNbt.NbtTag extractEntityNbt(org.bukkit.entity.Entity entity) {
-        LOG.warning("extractEntityNbt: NMS impl pending (save-v2 deferred); falling back to blocks-only.");
-        return null;
+        if (entity == null) return null;
+        try {
+            Entity nms = ((CraftEntity) entity).getHandle();
+            // Never serialize players.
+            if (nms instanceof net.minecraft.server.level.ServerPlayer) return null;
+            // Removed entities cannot be saved.
+            if (nms.isRemoved()) return null;
+            ServerLevel level = (ServerLevel) nms.level();
+            TagValueOutput out = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+            boolean ok;
+            try {
+                ok = nms.save(out);
+            } catch (Throwable t) {
+                if (!FoliaThreadException.isFoliaThreadException(t)) throw t;
+                LOG.warning("extractEntityNbt skipped (wrong region thread): " + t.getMessage());
+                return null;
+            }
+            if (!ok) return null;
+            CompoundTag ct = out.buildResult();
+            return fromNmsCompound(ct);
+        } catch (Throwable t) {
+            if (FoliaThreadException.isFoliaThreadException(t)) {
+                LOG.warning("extractEntityNbt skipped (wrong region thread): " + t.getMessage());
+                return null;
+            }
+            LOG.log(java.util.logging.Level.WARNING, "extractEntityNbt failed", t);
+            return null;
+        }
     }
 
     @Override
     public java.util.List<LitematicNbt.NbtTag> extractPendingBlockTicks(World world, int x, int y, int z) {
-        return java.util.Collections.emptyList();
+        try {
+            ServerLevel level = ((CraftWorld) world).getHandle();
+            BlockPos pos = new BlockPos(x, y, z);
+            net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunk(x >> 4, z >> 4);
+            net.minecraft.world.ticks.TickContainerAccess<net.minecraft.world.level.block.Block> access = chunk.getBlockTicks();
+            if (!(access instanceof net.minecraft.world.ticks.LevelChunkTicks<net.minecraft.world.level.block.Block> ticks)) {
+                return java.util.Collections.emptyList();
+            }
+            long gameTime = level.getGameTime();
+            java.util.List<LitematicNbt.NbtTag> out = new java.util.ArrayList<>();
+            ticks.getAll().forEach(scheduled -> {
+                if (!scheduled.pos().equals(pos)) return;
+                LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
+                net.minecraft.resources.Identifier key =
+                        net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(scheduled.type());
+                c.putString("i", key == null ? "minecraft:air" : key.toString());
+                c.putInt("x", scheduled.pos().getX());
+                c.putInt("y", scheduled.pos().getY());
+                c.putInt("z", scheduled.pos().getZ());
+                int delay = (int) Math.max(0, scheduled.triggerTick() - gameTime);
+                c.putInt("t", delay);
+                c.putInt("p", scheduled.priority().getValue());
+                out.add(c);
+            });
+            return out;
+        } catch (Throwable t) {
+            if (FoliaThreadException.isFoliaThreadException(t)) {
+                LOG.warning("extractPendingBlockTicks skipped (wrong region thread): " + t.getMessage());
+                return java.util.Collections.emptyList();
+            }
+            LOG.log(java.util.logging.Level.WARNING, "extractPendingBlockTicks failed", t);
+            return java.util.Collections.emptyList();
+        }
     }
 
     @Override
     public java.util.List<LitematicNbt.NbtTag> extractPendingFluidTicks(World world, int x, int y, int z) {
-        return java.util.Collections.emptyList();
+        try {
+            ServerLevel level = ((CraftWorld) world).getHandle();
+            BlockPos pos = new BlockPos(x, y, z);
+            net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunk(x >> 4, z >> 4);
+            net.minecraft.world.ticks.TickContainerAccess<net.minecraft.world.level.material.Fluid> access = chunk.getFluidTicks();
+            if (!(access instanceof net.minecraft.world.ticks.LevelChunkTicks<net.minecraft.world.level.material.Fluid> ticks)) {
+                return java.util.Collections.emptyList();
+            }
+            long gameTime = level.getGameTime();
+            java.util.List<LitematicNbt.NbtTag> out = new java.util.ArrayList<>();
+            ticks.getAll().forEach(scheduled -> {
+                if (!scheduled.pos().equals(pos)) return;
+                LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
+                net.minecraft.resources.Identifier key =
+                        net.minecraft.core.registries.BuiltInRegistries.FLUID.getKey(scheduled.type());
+                c.putString("i", key == null ? "minecraft:empty" : key.toString());
+                c.putInt("x", scheduled.pos().getX());
+                c.putInt("y", scheduled.pos().getY());
+                c.putInt("z", scheduled.pos().getZ());
+                int delay = (int) Math.max(0, scheduled.triggerTick() - gameTime);
+                c.putInt("t", delay);
+                c.putInt("p", scheduled.priority().getValue());
+                out.add(c);
+            });
+            return out;
+        } catch (Throwable t) {
+            if (FoliaThreadException.isFoliaThreadException(t)) {
+                LOG.warning("extractPendingFluidTicks skipped (wrong region thread): " + t.getMessage());
+                return java.util.Collections.emptyList();
+            }
+            LOG.log(java.util.logging.Level.WARNING, "extractPendingFluidTicks failed", t);
+            return java.util.Collections.emptyList();
+        }
     }
 
     private static int readIntOr(LitematicNbt.NbtCompound c, String key, int def) {

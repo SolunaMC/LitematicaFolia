@@ -1,7 +1,11 @@
 package fr.ekaii.litematica.protocol;
 
+import fr.ekaii.litematica.nms.NmsBridge;
+import fr.ekaii.litematica.protocol.handler.BlockEntityRequestHandler;
+import fr.ekaii.litematica.protocol.handler.BulkNbtRequestHandler;
 import fr.ekaii.litematica.protocol.handler.DirectPasteHandler;
 import fr.ekaii.litematica.protocol.handler.EasyPlaceHandler;
+import fr.ekaii.litematica.protocol.handler.EntityRequestHandler;
 import fr.ekaii.litematica.protocol.handler.MetadataHandler;
 import fr.ekaii.litematica.protocol.handler.StructureBboxHandler;
 import org.bukkit.entity.Player;
@@ -51,21 +55,31 @@ public final class ServuxBridge {
     private final EasyPlaceHandler easyPlaceHandler;
     private final DirectPasteHandler directPasteHandler;
     private final StructureBboxHandler structureBboxHandler;
+    private final BlockEntityRequestHandler blockEntityRequestHandler;
+    private final EntityRequestHandler entityRequestHandler;
+    private final BulkNbtRequestHandler bulkNbtRequestHandler;
 
     private volatile boolean enabled;
 
     public ServuxBridge(Plugin plugin) {
         this.plugin = plugin;
+        NmsBridge nms = NmsBridge.get();
         this.metadataHandler    = new MetadataHandler(plugin);
         this.easyPlaceHandler   = new EasyPlaceHandler(plugin);
         this.directPasteHandler = new DirectPasteHandler(plugin);
         this.structureBboxHandler = new StructureBboxHandler(plugin);
+        this.blockEntityRequestHandler = new BlockEntityRequestHandler(plugin, nms);
+        this.entityRequestHandler      = new EntityRequestHandler(plugin, nms);
+        this.bulkNbtRequestHandler     = new BulkNbtRequestHandler(plugin, nms);
         this.packetHandler = new PacketHandler(
                 plugin,
                 metadataHandler,
                 easyPlaceHandler,
                 directPasteHandler,
-                structureBboxHandler);
+                structureBboxHandler,
+                blockEntityRequestHandler,
+                entityRequestHandler,
+                bulkNbtRequestHandler);
     }
 
     /**

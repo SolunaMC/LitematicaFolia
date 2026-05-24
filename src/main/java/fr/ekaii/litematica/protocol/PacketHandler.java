@@ -1,7 +1,10 @@
 package fr.ekaii.litematica.protocol;
 
+import fr.ekaii.litematica.protocol.handler.BlockEntityRequestHandler;
+import fr.ekaii.litematica.protocol.handler.BulkNbtRequestHandler;
 import fr.ekaii.litematica.protocol.handler.DirectPasteHandler;
 import fr.ekaii.litematica.protocol.handler.EasyPlaceHandler;
+import fr.ekaii.litematica.protocol.handler.EntityRequestHandler;
 import fr.ekaii.litematica.protocol.handler.MetadataHandler;
 import fr.ekaii.litematica.protocol.handler.StructureBboxHandler;
 import org.bukkit.entity.Player;
@@ -33,17 +36,26 @@ public final class PacketHandler {
     private final EasyPlaceHandler easyPlace;
     private final DirectPasteHandler directPaste;
     private final StructureBboxHandler structures;
+    private final BlockEntityRequestHandler blockEntityRequest;
+    private final EntityRequestHandler entityRequest;
+    private final BulkNbtRequestHandler bulkNbtRequest;
 
     public PacketHandler(Plugin plugin,
                          MetadataHandler metadata,
                          EasyPlaceHandler easyPlace,
                          DirectPasteHandler directPaste,
-                         StructureBboxHandler structures) {
+                         StructureBboxHandler structures,
+                         BlockEntityRequestHandler blockEntityRequest,
+                         EntityRequestHandler entityRequest,
+                         BulkNbtRequestHandler bulkNbtRequest) {
         this.plugin = plugin;
         this.metadata = metadata;
         this.easyPlace = easyPlace;
         this.directPaste = directPaste;
         this.structures = structures;
+        this.blockEntityRequest = blockEntityRequest;
+        this.entityRequest = entityRequest;
+        this.bulkNbtRequest = bulkNbtRequest;
     }
 
     // ------------------------------------------------------------- entrypoints
@@ -69,11 +81,11 @@ public final class PacketHandler {
                 case ProtocolConstants.Litematics.C2S_METADATA_REQUEST ->
                     metadata.onMetadataRequest(player, r);
                 case ProtocolConstants.Litematics.C2S_BLOCK_ENTITY_REQUEST ->
-                    metadata.onBlockEntityRequest(player, r);
+                    blockEntityRequest.onRequest(player, r);
                 case ProtocolConstants.Litematics.C2S_ENTITY_REQUEST ->
-                    metadata.onEntityRequest(player, r);
+                    entityRequest.onRequest(player, r);
                 case ProtocolConstants.Litematics.C2S_BULK_NBT_REQUEST ->
-                    metadata.onBulkRequest(player, r);
+                    bulkNbtRequest.onRequest(player, r);
                 case ProtocolConstants.Litematics.C2S_NBT_STREAM_DATA ->
                     directPaste.onSplitterSlice(player, r);
                 case ProtocolConstants.Litematics.C2S_NBT_STREAM_START ->

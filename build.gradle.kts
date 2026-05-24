@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.2.0+26.1.2"
+version = "0.3.0+26.1.2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
@@ -25,12 +25,20 @@ repositories {
     // maven("https://mvn.intellectualsites.com/content/repositories/releases/") {
     //     content { includeGroup("com.fastasyncworldedit") }
     // }
+    maven("https://repo.codemc.io/repository/maven-releases/") {
+        content { includeGroup("com.github.retrooper") }
+    }
     mavenCentral()
 }
 
 dependencies {
     paperweight.paperDevBundle("26.1.2.build.53-stable")
     compileOnly(libs.luckperms)
+    // PacketEvents — required by EasyPlaceListener (P13). Shaded into the
+    // final fat jar so end users don't need to install PacketEvents as a
+    // separate plugin. PacketEvents 2.6+ supports Folia per upstream
+    // changelog.
+    implementation(libs.packetevents.spigot)
     // FAWE compileOnly deps disabled — see repository block above.
     // compileOnly(libs.fawe.bukkit)
     // compileOnly(libs.fawe.core)
@@ -39,6 +47,20 @@ dependencies {
 tasks {
     assemble {
         dependsOn(shadowJar)
+    }
+    shadowJar {
+        // Relocate PacketEvents to avoid classpath clashes if another
+        // plugin on the server also bundles a different PacketEvents
+        // version. Keep adventure / kyori untouched — they're already
+        // provided by Paper and PacketEvents transitively pulls them as
+        // `compile` scope.
+        relocate("com.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents")
+        relocate("io.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents.spigot")
+        // Strip transitive adventure / kyori from the shaded jar — Paper
+        // already provides them.
+        dependencies {
+            exclude(dependency("net.kyori:.*"))
+        }
     }
     compileJava {
         options.encoding = Charsets.UTF_8.name()

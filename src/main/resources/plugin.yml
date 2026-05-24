@@ -31,3 +31,6 @@ permissions:
   litematica.protocol.easyplace:
     description: Use Easy Place V3 over the LitematicaFolia protocol channel
     default: false
+  litematica.easyplace.use:
+    description: Apply Easy Place V3 server-side overrides on placement
+    default: op

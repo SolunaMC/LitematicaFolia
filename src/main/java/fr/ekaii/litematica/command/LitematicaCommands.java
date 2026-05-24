@@ -15,6 +15,7 @@ import fr.ekaii.litematica.core.LitematicReader;
 import fr.ekaii.litematica.core.LitematicRegion;
 import fr.ekaii.litematica.core.LitematicSchematic;
 import fr.ekaii.litematica.core.LitematicWriter;
+import fr.ekaii.litematica.nms.NmsBridge;
 import fr.ekaii.litematica.paste.FoliaCompat;
 import fr.ekaii.litematica.paste.PasteOperation;
 import fr.ekaii.litematica.paste.PasteOptions;
@@ -284,49 +285,53 @@ public final class LitematicaCommands {
                 + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ()
                 + " (yaw=" + finalYaw + ")…", NamedTextColor.GREEN));
 
-        // Read the file — IO is fast, do it on the calling thread.
-        LitematicSchematic schem;
-        try {
-            schem = LitematicReader.read(schemFile.toPath());
-        } catch (IOException e) {
-            sender.sendMessage(Component.text("failed to read " + fileName + ": " + e.getMessage(), NamedTextColor.RED));
-            plugin.getLogger().log(Level.WARNING, "paste: read failed", e);
-            return 0;
-        }
-
-        PasteOperation op = new PasteOperation(plugin, schem, opts);
+        // Read+parse the .litematic OFF the command thread. Big schematics
+        // (3.5 MiB+) take ~10s to NBT-decode + unpack; doing that synchronously
+        // here trips Folia's watchdog and blocks the player's connection.
         String ticket = sender.getName() + "#" + opSeq.incrementAndGet();
-        activeOps.put(ticket, op);
         sender.sendMessage(Component.text(
                 "ticket " + ticket + " — /litematica cancel " + ticket + " to abort",
                 NamedTextColor.AQUA));
 
-        CompletableFuture<fr.ekaii.litematica.paste.PasteResult> future = op.execute();
-
-        future.whenComplete((result, throwable) -> {
-            activeOps.remove(ticket);
-            if (throwable != null) {
-                sender.sendMessage(Component.text("paste failed: " + throwable.getMessage(), NamedTextColor.RED));
-                plugin.getLogger().log(Level.WARNING, "paste failed", throwable);
+        fr.ekaii.litematica.paste.FoliaCompat.runAsync(plugin, () -> {
+            LitematicSchematic schem;
+            try {
+                schem = LitematicReader.read(schemFile.toPath());
+            } catch (IOException e) {
+                sender.sendMessage(Component.text("failed to read " + fileName + ": " + e.getMessage(), NamedTextColor.RED));
+                plugin.getLogger().log(Level.WARNING, "paste: read failed", e);
                 return;
             }
-            String tag = op.isCancelled() ? "paste CANCELLED: " : "paste complete: ";
-            NamedTextColor color = op.isCancelled() ? NamedTextColor.YELLOW : NamedTextColor.GREEN;
-            sender.sendMessage(Component.text(
-                    tag + result.blocksPlaced() + " blocks, "
-                            + result.entitiesSpawned() + " entities, "
-                            + result.tileEntitiesPlaced() + " tile entities, "
-                            + result.durationMs() + " ms",
-                    color));
-            if (!result.errors().isEmpty()) {
-                int shown = Math.min(5, result.errors().size());
-                sender.sendMessage(Component.text(
-                        result.errors().size() + " error(s) — first " + shown + ":",
-                        NamedTextColor.YELLOW));
-                for (int i = 0; i < shown; i++) {
-                    sender.sendMessage(Component.text("  • " + result.errors().get(i), NamedTextColor.YELLOW));
+
+            PasteOperation op = new PasteOperation(plugin, schem, opts);
+            activeOps.put(ticket, op);
+            CompletableFuture<fr.ekaii.litematica.paste.PasteResult> future = op.execute();
+
+            future.whenComplete((result, throwable) -> {
+                activeOps.remove(ticket);
+                if (throwable != null) {
+                    sender.sendMessage(Component.text("paste failed: " + throwable.getMessage(), NamedTextColor.RED));
+                    plugin.getLogger().log(Level.WARNING, "paste failed", throwable);
+                    return;
                 }
-            }
+                String tag = op.isCancelled() ? "paste CANCELLED: " : "paste complete: ";
+                NamedTextColor color = op.isCancelled() ? NamedTextColor.YELLOW : NamedTextColor.GREEN;
+                sender.sendMessage(Component.text(
+                        tag + result.blocksPlaced() + " blocks, "
+                                + result.entitiesSpawned() + " entities, "
+                                + result.tileEntitiesPlaced() + " tile entities, "
+                                + result.durationMs() + " ms",
+                        color));
+                if (!result.errors().isEmpty()) {
+                    int shown = Math.min(5, result.errors().size());
+                    sender.sendMessage(Component.text(
+                            result.errors().size() + " error(s) — first " + shown + ":",
+                            NamedTextColor.YELLOW));
+                    for (int i = 0; i < shown; i++) {
+                        sender.sendMessage(Component.text("  • " + result.errors().get(i), NamedTextColor.YELLOW));
+                    }
+                }
+            });
         });
         return 1;
     }
@@ -454,6 +459,16 @@ public final class LitematicaCommands {
         paletteIndex.put("minecraft:air", 0);
         paletteList.add(new BlockStateEntry("minecraft:air"));
 
+        // Save-v2: thread-safe lists for TE / pending-tick NBT captured per-chunk.
+        // Entities are captured separately after all chunk reads (single
+        // world.getNearbyEntities call from a global-region context).
+        final List<LitematicNbt.NbtTag> tileEntities = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<LitematicNbt.NbtTag> pendingBlockTicks = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<LitematicNbt.NbtTag> pendingFluidTicks = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        // NmsBridge is cached on the plugin so tests + reflective lookup happen once.
+        final NmsBridge bridge = NmsBridge.get();
+
         int minCX = minX >> 4, maxCX = maxX >> 4;
         int minCZ = minZ >> 4, maxCZ = maxZ >> 4;
         List<CompletableFuture<Void>> reads = new ArrayList<>();
@@ -497,6 +512,41 @@ public final class LitematicaCommands {
                                 if (idx != 0) nonAir.incrementAndGet();
                                 int lx = x - minX, ly = y - minY, lz = z - minZ;
                                 blocks[ly * sizeX * sizeZ + lz * sizeX + lx] = idx;
+
+                                // Save-v2: extract TE NBT for blocks that have one.
+                                if (b.getState() instanceof org.bukkit.block.TileState) {
+                                    LitematicNbt.NbtTag te;
+                                    try {
+                                        te = bridge.extractTileEntityNbt(world, x, y, z);
+                                    } catch (Throwable t) {
+                                        te = null;
+                                    }
+                                    if (te instanceof LitematicNbt.NbtCompound teC) {
+                                        // Rewrite x/y/z to region-local coords (Litematica convention).
+                                        LinkedHashMap<String, LitematicNbt.NbtTag> entries =
+                                                new LinkedHashMap<>(teC.entries());
+                                        entries.put("x", new LitematicNbt.NbtInt(lx));
+                                        entries.put("y", new LitematicNbt.NbtInt(ly));
+                                        entries.put("z", new LitematicNbt.NbtInt(lz));
+                                        tileEntities.add(new LitematicNbt.NbtCompound(entries));
+                                    }
+                                }
+
+                                // Save-v2: extract pending block + fluid ticks (region-local coords on output).
+                                try {
+                                    List<LitematicNbt.NbtTag> bt = bridge.extractPendingBlockTicks(world, x, y, z);
+                                    for (LitematicNbt.NbtTag t : bt) {
+                                        rewritePendingTickPos(t, lx, ly, lz);
+                                        pendingBlockTicks.add(t);
+                                    }
+                                    List<LitematicNbt.NbtTag> ft = bridge.extractPendingFluidTicks(world, x, y, z);
+                                    for (LitematicNbt.NbtTag t : ft) {
+                                        rewritePendingTickPos(t, lx, ly, lz);
+                                        pendingFluidTicks.add(t);
+                                    }
+                                } catch (Throwable ignored) {
+                                    // bridge logs already
+                                }
                             }
                         }
                     }
@@ -504,65 +554,137 @@ public final class LitematicaCommands {
             }
         }
 
+        // Entity extraction list — populated in the post-chunk-read global-region
+        // pass below, then attached to the region NBT in the async writer.
+        final List<LitematicNbt.NbtTag> entities = new java.util.concurrent.CopyOnWriteArrayList<>();
+
         CompletableFuture.allOf(reads.toArray(new CompletableFuture[0])).whenComplete((ignored, throwable) -> {
             if (throwable != null) {
                 sender.sendMessage(Component.text("save failed: " + throwable.getMessage(), NamedTextColor.RED));
                 plugin.getLogger().log(Level.WARNING, "save: chunk read failed", throwable);
                 return;
             }
-            // Build the schematic POJO + write to disk on an async worker.
-            FoliaCompat.runAsync(plugin, () -> {
+
+            // Entity extraction: world.getNearbyEntities() must run on a thread
+            // that can see the world. On Folia this requires a region context
+            // — we use the global scheduler since the bbox may span multiple
+            // regions and each entity will be serialised via its own per-entity
+            // scheduler if it lands in another region. extractEntityNbt itself
+            // is implemented to fail-soft via FoliaThreadException.
+            CompletableFuture<Void> entityPass = FoliaCompat.runGlobal(plugin, () -> {
                 try {
-                    LitematicSchematic schem = new LitematicSchematic();
-                    schem.version = 6;
-                    schem.minecraftDataVersion = 0; // unknown — DataFixer-only consumers will skip
-                    LitematicMetadata md = schem.metadata;
-                    md.name = name;
-                    md.author = (sender instanceof Player p) ? p.getName() : "console";
-                    md.description = "Saved via /litematica save by " + md.author;
-                    md.enclosingSizeX = sizeX;
-                    md.enclosingSizeY = sizeY;
-                    md.enclosingSizeZ = sizeZ;
-                    md.totalBlocks = nonAir.get();
-                    md.totalVolume = (long) sizeX * sizeY * sizeZ;
-                    md.timeCreated = System.currentTimeMillis();
-                    md.timeModified = md.timeCreated;
-                    md.regionCount = 1;
-
-                    LitematicRegion region = new LitematicRegion();
-                    region.name = name;
-                    region.originX = minX;
-                    region.originY = minY;
-                    region.originZ = minZ;
-                    region.sizeX = sizeX;
-                    region.sizeY = sizeY;
-                    region.sizeZ = sizeZ;
-                    region.palette.addAll(paletteList);
-                    region.blocks = blocks;
-                    region.tileEntities      = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
-                    region.entities          = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
-                    region.pendingBlockTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
-                    region.pendingFluidTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
-                    schem.regions.put(name, region);
-
-                    File outDir = plugin.getSchematicsDir();
-                    if (!outDir.isDirectory()) outDir.mkdirs();
-                    File outFile = new File(outDir, name + ".litematic");
-                    LitematicWriter.write(outFile.toPath(), schem);
-                    long ms = (System.nanoTime() - startNs) / 1_000_000L;
-                    sender.sendMessage(Component.text(
-                            "saved " + outFile.getName() + " (" + nonAir.get() + " non-air blocks, "
-                                    + paletteList.size() + " palette entries, " + ms + " ms)",
-                            NamedTextColor.GREEN));
-                    // TODO(P1d v2): capture tile-entity NBT + pending ticks + entities via FoliaCompat
-                    //                + NmsBridge#fromNmsCompound. Currently blocks-only.
+                    org.bukkit.util.BoundingBox bb = new org.bukkit.util.BoundingBox(
+                            minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+                    // Center + halfDiag form of getNearbyEntities — uses bbox.
+                    java.util.Collection<org.bukkit.entity.Entity> nearby =
+                            world.getNearbyEntities(bb);
+                    for (org.bukkit.entity.Entity e : nearby) {
+                        if (e instanceof Player) continue;
+                        LitematicNbt.NbtTag eNbt;
+                        try {
+                            eNbt = bridge.extractEntityNbt(e);
+                        } catch (Throwable t) {
+                            eNbt = null;
+                        }
+                        if (eNbt instanceof LitematicNbt.NbtCompound eC) {
+                            // Rewrite Pos to region-local doubles (Litematica convention).
+                            LinkedHashMap<String, LitematicNbt.NbtTag> entries =
+                                    new LinkedHashMap<>(eC.entries());
+                            LitematicNbt.NbtList pos = new LitematicNbt.NbtList(
+                                    LitematicNbt.TAG_DOUBLE, new ArrayList<>());
+                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getX() - minX));
+                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getY() - minY));
+                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getZ() - minZ));
+                            entries.put("Pos", pos);
+                            entities.add(new LitematicNbt.NbtCompound(entries));
+                        }
+                    }
                 } catch (Throwable t) {
-                    sender.sendMessage(Component.text("save write failed: " + t.getMessage(), NamedTextColor.RED));
-                    plugin.getLogger().log(Level.WARNING, "save: write failed", t);
+                    plugin.getLogger().log(Level.WARNING, "save: entity extraction failed (continuing)", t);
                 }
+            });
+
+            entityPass.whenComplete((vv, tt) -> {
+                // Build the schematic POJO + write to disk on an async worker.
+                FoliaCompat.runAsync(plugin, () -> {
+                    try {
+                        LitematicSchematic schem = new LitematicSchematic();
+                        schem.version = 6;
+                        schem.minecraftDataVersion = bridge.currentDataVersion();
+                        LitematicMetadata md = schem.metadata;
+                        md.name = name;
+                        md.author = (sender instanceof Player p) ? p.getName() : "console";
+                        md.description = "Saved via /litematica save by " + md.author;
+                        md.enclosingSizeX = sizeX;
+                        md.enclosingSizeY = sizeY;
+                        md.enclosingSizeZ = sizeZ;
+                        md.totalBlocks = nonAir.get();
+                        md.totalVolume = (long) sizeX * sizeY * sizeZ;
+                        md.timeCreated = System.currentTimeMillis();
+                        md.timeModified = md.timeCreated;
+                        md.regionCount = 1;
+
+                        LitematicRegion region = new LitematicRegion();
+                        region.name = name;
+                        region.originX = minX;
+                        region.originY = minY;
+                        region.originZ = minZ;
+                        region.sizeX = sizeX;
+                        region.sizeY = sizeY;
+                        region.sizeZ = sizeZ;
+                        region.palette.addAll(paletteList);
+                        region.blocks = blocks;
+                        region.tileEntities      = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND,
+                                new ArrayList<>(tileEntities));
+                        region.entities          = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND,
+                                new ArrayList<>(entities));
+                        region.pendingBlockTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND,
+                                new ArrayList<>(pendingBlockTicks));
+                        region.pendingFluidTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND,
+                                new ArrayList<>(pendingFluidTicks));
+                        schem.regions.put(name, region);
+
+                        File outDir = plugin.getSchematicsDir();
+                        if (!outDir.isDirectory()) outDir.mkdirs();
+                        File outFile = new File(outDir, name + ".litematic");
+                        LitematicWriter.write(outFile.toPath(), schem);
+                        long ms = (System.nanoTime() - startNs) / 1_000_000L;
+                        sender.sendMessage(Component.text(
+                                "save complete: " + outFile.getName() + " (" + nonAir.get() + " non-air blocks, "
+                                        + paletteList.size() + " palette entries, "
+                                        + tileEntities.size() + " TE, "
+                                        + entities.size() + " entities, "
+                                        + pendingBlockTicks.size() + " bt, "
+                                        + pendingFluidTicks.size() + " ft, "
+                                        + ms + " ms)",
+                                NamedTextColor.GREEN));
+                        plugin.getLogger().info("save complete: " + outFile.getName()
+                                + " (" + nonAir.get() + " blocks, "
+                                + tileEntities.size() + " TE, "
+                                + entities.size() + " entities, "
+                                + pendingBlockTicks.size() + " bt, "
+                                + pendingFluidTicks.size() + " ft, "
+                                + ms + " ms)");
+                    } catch (Throwable t) {
+                        sender.sendMessage(Component.text("save write failed: " + t.getMessage(), NamedTextColor.RED));
+                        plugin.getLogger().log(Level.WARNING, "save: write failed", t);
+                    }
+                });
             });
         });
         return 1;
+    }
+
+    /**
+     * Rewrite x/y/z fields of a pending-tick compound to region-local coords.
+     * Mutates the compound in place (cheap — the NMS extractor always returns
+     * a fresh NbtCompound). No-op for non-compound tags.
+     */
+    static void rewritePendingTickPos(LitematicNbt.NbtTag tag, int lx, int ly, int lz) {
+        if (!(tag instanceof LitematicNbt.NbtCompound c)) return;
+        c.putInt("x", lx);
+        c.putInt("y", ly);
+        c.putInt("z", lz);
     }
 
     /** Parses a Bukkit BlockData {@code getAsString()} form back into {@link BlockStateEntry}. */

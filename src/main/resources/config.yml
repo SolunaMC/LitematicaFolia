@@ -35,6 +35,12 @@ protocol:
   enableServuxBridge: false
   # Channel name. Default matches sakura-ryoko/servux for client compatibility.
   channel: "servux:litematics"
+  # Enable the Easy Place V3 server-side listener (PacketEvents-based).
+  # When a Litematica client sends a ServerboundUseItemOnPacket with the
+  # X-fractional protocol marker, the listener decodes it and overrides
+  # the placed block's facing to match the schematic. No-op for vanilla
+  # clients. Default off until smoke-tested against a real client.
+  enableEasyPlace: false
 
 fawe:
   # Register a FAWE ClipboardFormat for .litematic when FAWE is detected.

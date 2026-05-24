@@ -1,0 +1,12 @@
+[stress-smoke] generating large-256 fixture (litematica.stress=true gradle test)…
+[stress-smoke] fixture ready: /Users/paulchauvat/litematica-folia-ekaii/schematics-fixtures/large-256.litematic (3,5 MiB)
+[stress-smoke] running run-tests.sh to boot a fresh server…
+[stress-smoke] run-tests.sh PASS — re-booting server for stress phase
+[stress-smoke] server reboot ready
+[stress-smoke] staged large-256.litematic into plugin dir
+[stress-smoke] issuing /litematica paste large-256 100 64 100
+[stress-smoke] rcon: §apasting large-256 at 100,64,100 (yaw=0)…
+§bticket Rcon#1 — /litematica cancel Rcon#1 to abort
+[stress-smoke] paste reported complete after 15s (peak RSS 3698 MiB)
+[stress-smoke] PASS
+[stress-smoke] shutting down server pid=47745

@@ -4,40 +4,40 @@ Servux Direct-Paste verified end-to-end:
   - bot completed handshake -> login -> config -> play
   - servux:litematics metadata exchange: 1
   - server logged 1 "paste complete:" line(s)
-  - newest region-file mtime: 1779633450
+  - newest region-file mtime: 1779642684
   - block probe at expected stone location: 0 (returned: )
 
 Server last 30 lines:
-[16:37:00] [Server thread/INFO]: Preparing spawn area: 100%
-[16:37:00] [Server thread/INFO]: Prepared spawn area in 56 ms
-[16:37:00] [Server thread/INFO]: Done preparing level "world_smoke" (1.252s)
-[16:37:00] [Server thread/INFO]: Starting remote control listener
-[16:37:00] [Server thread/INFO]: Thread RCON Listener started
-[16:37:00] [Server thread/INFO]: RCON running on 0.0.0.0:25698
-[16:37:00] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:overworld
-[16:37:00] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:the_nether
-[16:37:00] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:the_end
-[16:37:00] [Server thread/INFO]: ThreadedChunkStorage (world): All chunks are saved
-[16:37:00] [Server thread/INFO]: ThreadedChunkStorage (DIM-1): All chunks are saved
-[16:37:00] [Server thread/INFO]: ThreadedChunkStorage (DIM1): All chunks are saved
-[16:37:00] [Server thread/INFO]: ThreadedChunkStorage: All dimensions are saved
-[16:37:00] [Server thread/INFO]: Done (4.353s)! For help, type "help"
-[16:37:02] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
-[16:37:02] [RCON Client /127.0.0.1 #2/INFO]: Thread RCON Client /127.0.0.1 shutting down
-[16:37:02] [User Authenticator #0/INFO]: UUID of player ProtoBot is 4b29dcd8-c747-3975-9ced-9cc32fe38557
-[16:37:04] [Folia Region Scheduler Thread #1/INFO]: ProtoBot joined the game
-[16:37:04] [Folia Region Scheduler Thread #1/INFO]: ProtoBot[/127.0.0.1:49560] logged in with entity id 17 at ([minecraft:overworld]532.5, 64.0, 578.5)
-[16:37:04] [Folia Region Scheduler Thread #1/INFO]: [LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0 entities, 0 err in 219ms
-[16:37:19] [Folia Region Scheduler Thread #1/INFO]: ProtoBot lost connection: Disconnected
-[16:37:19] [Folia Region Scheduler Thread #1/INFO]: ProtoBot left the game
-[16:37:29] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
-[16:37:29] [RCON Client /127.0.0.1 #3/INFO]: Thread RCON Client /127.0.0.1 shutting down
-[16:37:31] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
-[16:37:31] [RCON Client /127.0.0.1 #4/INFO]: Thread RCON Client /127.0.0.1 shutting down
-[16:37:32] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
-[16:37:32] [RCON Client /127.0.0.1 #5/INFO]: Thread RCON Client /127.0.0.1 shutting down
-[16:37:32] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
-[16:37:32] [RCON Client /127.0.0.1 #6/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[19:10:54] [Server thread/INFO]: Thread RCON Listener started
+[19:10:54] [Server thread/INFO]: RCON running on 0.0.0.0:25698
+[19:10:54] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:overworld
+[19:10:54] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:the_nether
+[19:10:54] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_smoke]'/minecraft:the_end
+[19:10:54] [Server thread/INFO]: ThreadedChunkStorage (world): All chunks are saved
+[19:10:54] [Server thread/INFO]: ThreadedChunkStorage (DIM-1): All chunks are saved
+[19:10:54] [Server thread/INFO]: ThreadedChunkStorage (DIM1): All chunks are saved
+[19:10:54] [Server thread/INFO]: ThreadedChunkStorage: All dimensions are saved
+[19:10:54] [Server thread/INFO]: Done (7.212s)! For help, type "help"
+[19:10:56] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[19:10:56] [RCON Client /127.0.0.1 #2/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[19:10:57] [User Authenticator #0/INFO]: UUID of player ProtoBot is 4b29dcd8-c747-3975-9ced-9cc32fe38557
+[19:10:58] [Folia Region Scheduler Thread #1/INFO]: ProtoBot joined the game
+[19:10:58] [Folia Region Scheduler Thread #1/INFO]: ProtoBot[/127.0.0.1:51526] logged in with entity id 2 at ([minecraft:overworld]-693.5, 62.0, 578.5)
+[19:10:58] [Folia Region Scheduler Thread #1/INFO]: [LitematicaFolia] [diag] ProtoBot registered channel: servux:litematics
+[19:10:58] [Folia Region Scheduler Thread #1/INFO]: [LitematicaFolia] [diag] ProtoBot registered channel: servux:structures
+[19:10:58] [Folia Region Scheduler Thread #1/INFO]: [LitematicaFolia] [diag] ProtoBot registered channel: litematicafolia:easy_place
+[19:10:59] [Folia Region Scheduler Thread #1/INFO]: [LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0 entities, 0 err in 240ms
+[19:11:03] [Folia Async Scheduler Thread #0/INFO]: [LitematicaFolia] [diag] ProtoBot channels after 5s: servux:litematics, servux:structures, litematicafolia:easy_place
+[19:11:13] [Folia Region Scheduler Thread #1/INFO]: ProtoBot lost connection: Disconnected
+[19:11:13] [Folia Region Scheduler Thread #1/INFO]: ProtoBot left the game
+[19:11:23] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[19:11:23] [RCON Client /127.0.0.1 #3/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[19:11:25] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[19:11:25] [RCON Client /127.0.0.1 #4/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[19:11:26] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[19:11:27] [RCON Client /127.0.0.1 #5/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[19:11:27] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[19:11:27] [RCON Client /127.0.0.1 #6/INFO]: Thread RCON Client /127.0.0.1 shutting down
 
 Bot last 40 lines:
 [bot] [config] RegistryData (skipped) len=4126
@@ -50,7 +50,7 @@ Bot last 40 lines:
 [bot] [servux] sent C2S_METADATA_REQUEST
 [bot] [servux] read 342 bytes from /Users/paulchauvat/litematica-folia-ekaii/schematics-fixtures/stone-cube-4.litematic
 [bot] [servux]   outer-splitter frame -> 1 slice(s), 242 body bytes
-[bot] [servux] sent TransmitStart sliceKey=-7851230372474417163 totalSize=342
+[bot] [servux] sent TransmitStart sliceKey=-2267846320160802680 totalSize=342
 [bot] [servux]   outer-splitter frame -> 1 slice(s), 417 body bytes
 [bot] [servux] sent TransmitData (342 bytes)
 [bot] [servux]   outer-splitter frame -> 1 slice(s), 68 body bytes
@@ -59,12 +59,12 @@ Bot last 40 lines:
 [bot] [play] pumping packets for 15s to drain replies + paste
 [bot] [play] CustomPayload channel=minecraft:register bytes=36
 [bot] [play] PlayerPosition → ack teleport=1
-[bot] [play] keepalive ping → pong
 [bot] [play] CustomPayload channel=servux:litematics bytes=96
 [bot] [servux] inbound packet type=1
 [bot] [servux] metadata NBT keys: [name, id, version, servux]
 [bot] [servux] name=litematic_data id=servux:litematics version=1 servux=LitematicaFolia 0.1.0
 [bot] [servux] METADATA OK — bridge active
+[bot] [play] keepalive ping → pong
 [bot] [play] keepalive ping → pong
 [bot] [play] keepalive ping → pong
 [bot] [play] keepalive ping → pong

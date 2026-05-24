@@ -50,3 +50,5 @@ test-harness/servux-gradle.log
 *.iws
 *.ipr
 hs_err_pid*
+local-smoke-server/
+test-harness/server/
