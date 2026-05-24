@@ -8,7 +8,7 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~04:47 — P1a + P1b + P1c + P1e landed)
+## State (last tick: 2026-05-24 ~05:05 — P1a + P1b + P1c + P1d + P1e landed)
 
 ### Done
 - [x] `admin_ekaii/litematica-folia-ekaii` repo created on forgejo.ekaii.fr
@@ -52,12 +52,24 @@ Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prom
   - Disabled cleanly on RCON `stop` (`save-all flush` would be ideal but harness already calls `stop` which triggers RegionShutdownThread)
   - Fixes applied: `description: "${description}"` quoted in plugin.yml/paper-plugin.yml (Gradle expand was emitting an unquoted colon), additional fail patterns (`Error loading plugin`, `Initialized 0 plugins`), `|| true` guard on luminol*.jar cache lookup
 
+- [x] **P1d — `/litematica` commands** (tick 2026-05-24 ~05:05)
+  - `command/LitematicaCommands.java` — Brigadier registration via `getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, …)` (pattern from `axiom-folia/AxiomPaper.java:286`)
+  - Subcommands implemented:
+    - `/litematica paste <file> [x y z] [yaw] [--no-entities|--no-physics|--no-tile-entities|--no-pending-ticks]` (`litematica.paste`) — tab-completes from `schematics/*.litematic`; flags accepted as Brigadier literal terminals (chainable in any order via recursive subtree); reads schematic, builds `PasteOptions` from defaults + config + flags, dispatches `PasteOperation`, reports progress + completion + first 5 errors
+    - `/litematica save <name> <x1 y1 z1> <x2 y2 z2>` (`litematica.save`) — **blocks-only v1** (TODO: TE/entities/pending-ticks via NmsBridge.fromNmsCompound); per-chunk read via `FoliaCompat.runOnRegion`, palette built from `BlockData.getAsString()`, file written async via `FoliaCompat.runAsync`; guarded by `schematic.maxSaveVolume` (default 16M cells)
+    - `/litematica materials <file>` (`litematica.materials`) — group by `BlockStateEntry.name()`, drop properties, filter air variants, top 30 by count
+    - `/litematica list [--filter <glob>]` (`litematica.use`) — name + size + mtime + palette size per file; PathMatcher with `glob:` prefix
+    - `/litematica info <file>` (`litematica.use`) — header (name/author/desc/created/DV/version), per-region (name/origin/size/palette/blocks/TE/entities)
+    - `/litematica reload` (`litematica.admin`) — `reloadConfig()` + mkdirs schematics dir
+  - All output via Adventure `Component` with GREEN (info/success) / YELLOW (warning) / RED (error) / GOLD (header) / AQUA (filenames)
+  - `./gradlew compileJava` GREEN (verified after staging out parallel P2 WIP)
+
 ### In flight / next
-- [ ] **P1d commands** — `/litematica paste|save|materials|list|reload` wired to PasteOperation
-- [ ] **Build + smoke validator** — `./gradlew build` + `test-harness/run-tests.sh` against current jar
-- [ ] **P2 Servux protocol** — scaffold the `servux:litematics` channel handler (Netty pipeline injection like axiom)
+- [ ] **P2 Servux protocol** — in flight in parallel (untracked WIP in `protocol/`); currently breaks `compileJava` (missing handler classes); not part of P1d scope
+- [ ] **P1d v2** — `save` to capture TE/entities/pending-ticks (currently blocks-only; documented TODO)
+- [ ] **Re-run smoke harness** with P1d commands jar
 - [ ] **P3 FAWE adapter** — on hold (`mvn.intellectualsites.com` NXDOMAIN)
-- [ ] **P4 hardening + release** — pending P1d + smoke green
+- [ ] **P4 hardening + release** — pending smoke green
 
 ## Architecture
 
