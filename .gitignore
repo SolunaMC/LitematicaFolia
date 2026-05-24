@@ -39,6 +39,15 @@ test-harness/server/config/
 test-harness/server/luminol_config/
 test-harness/server/plugins/LitematicaFolia/
 schematics-fixtures/*.litematic
+test-harness/fabric-client/instance/
+test-harness/fabric-client/mods/
+test-harness/fabric-client/*.log
+test-harness/protocol-bot/build/
+test-harness/servux-smoke.txt
+test-harness/servux-run.log
+test-harness/servux-bot.log
+test-harness/servux.pid
+test-harness/servux-gradle.log
 *.iws
 *.ipr
 hs_err_pid*
