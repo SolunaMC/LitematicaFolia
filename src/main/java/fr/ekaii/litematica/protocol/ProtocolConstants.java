@@ -3,40 +3,43 @@ package fr.ekaii.litematica.protocol;
 /**
  * Wire-format constants for the Servux-compatible custom payload protocol.
  *
- * <p>Channel names and packet-type IDs are reverse-engineered from the
- * public source of
- * <a href="https://github.com/sakura-ryoko/servux">sakura-ryoko/servux</a>
- * (LGPL-3.0). The Servux project is referenced for the wire format only —
- * no code was copied. Channel names and integer packet IDs are facts about
- * an interoperable wire format and are not themselves copyrightable.
+ * <p>Channel names and packet-type IDs are extracted from the public
+ * source of <a href="https://github.com/sakura-ryoko/servux">sakura-ryoko/servux</a>
+ * at tag {@code 26.1.2-0.10.2}. The Servux project (LGPL-3.0) is
+ * referenced for the wire format only — no code was copied. Channel
+ * names and integer packet IDs are facts about an interoperable wire
+ * format and are not themselves copyrightable. See
+ * {@code SERVUX_WIRE_FORMAT.md} in the repo root for the full spec +
+ * source-line citations.
  *
  * <h2>Channels</h2>
  * <ul>
  *   <li>{@code servux:litematics} — main Litematica integration channel
- *       (metadata, block-entity / entity NBT requests, paste).</li>
- *   <li>{@code servux:structures} — vanilla structure bounding-box stream
- *       used by MiniHUD. Bonus, partially scaffolded.</li>
+ *       (metadata, block-entity / entity NBT requests, Direct Paste
+ *       file-transmit). This is also the handshake channel: there is no
+ *       separate {@code servux:metadata}.</li>
+ *   <li>{@code servux:structures} — vanilla structure bounding-box
+ *       stream used by MiniHUD. Scaffolded; not exercised end-to-end.</li>
  *   <li>{@code servux:tweaks} / {@code servux:entity_data} /
- *       {@code servux:hud_metadata} — declared by Servux but out of scope
- *       for this plugin.</li>
+ *       {@code servux:hud_metadata} — declared by Servux but out of
+ *       scope for this plugin.</li>
  * </ul>
  *
- * <h2>Litematics packet layout</h2>
- * Every packet on {@code servux:litematics} starts with a {@code VarInt}
- * encoding the packet type (see {@link Litematics}), followed by a
- * type-specific payload. Layouts are documented on each constant.
- *
- * <h2>Structures packet layout</h2>
- * Same convention — VarInt type id then payload.
+ * <h2>Packet layout convention</h2>
+ * Every Servux packet on any channel starts with a {@code VarInt}
+ * encoding the packet type, followed by a type-specific payload. The
+ * type IDs are namespaced per channel.
  *
  * <h2>Easy Place V3</h2>
- * The base Servux project does not currently ship Easy Place V3 — that
- * functionality lives in the upstream Litematica client mod. To keep this
- * plugin a self-contained server-side bridge, we extend the protocol with
- * a vendor namespace ({@code litematicafolia:easy_place}) and a vendor
- * packet block ({@link EasyPlace}). The handshake announces the
- * {@code "easy_place_v3"} capability so clients can detect the
- * extension.
+ * Servux does NOT implement Easy Place V3 with a custom packet — it
+ * decodes the protocol value from the X-fractional component of the
+ * hit vector inside a vanilla {@code ServerboundUseItemOnPacket}
+ * (server-side {@code BlockItem} mixin). To stay wire-compatible with
+ * unmodified Litematica clients we would need an equivalent mixin on
+ * Paper; that is deferred. The previously declared
+ * {@code litematicafolia:easy_place} channel is unused at runtime —
+ * the constants below remain only so the handler / test code can
+ * compile, but {@link ServuxBridge} does not register the channel.
  */
 public final class ProtocolConstants {
 
@@ -45,20 +48,26 @@ public final class ProtocolConstants {
 
     // ---------------------------------------------------------- channel names
 
-    /** Primary Litematica channel (Servux-compatible). */
+    /** Primary Litematica channel (Servux-compatible). Also carries the handshake. */
     public static final String CHANNEL_LITEMATICS = "servux:litematics";
 
     /** Vanilla structure bbox stream (MiniHUD-compatible). */
     public static final String CHANNEL_STRUCTURES = "servux:structures";
 
-    /** Metadata / handshake channel (alias of litematics in Servux). */
-    public static final String CHANNEL_METADATA   = "servux:litematics";
+    /**
+     * @deprecated Servux has no separate metadata channel — handshake
+     *             rides on {@link #CHANNEL_LITEMATICS}. Kept as an alias
+     *             for source compatibility; do NOT use as a real channel.
+     */
+    @Deprecated
+    public static final String CHANNEL_METADATA   = CHANNEL_LITEMATICS;
 
     /**
-     * Easy Place V2/V3 vendor channel. Distinct from {@code servux:litematics}
-     * so that we can iterate on the placement protocol without breaking the
-     * core channel. Servux uses a different wire path for Easy Place; we
-     * adopt our own to avoid lock-in.
+     * LitematicaFolia-vendor Easy Place channel. <strong>Not registered
+     * at runtime</strong> — Servux drives Easy Place via the vanilla
+     * use-item-on packet (see class javadoc). Kept for compile + test
+     * compatibility; future revisions may wire it back if/when a Paper
+     * mixin pipeline lands.
      */
     public static final String CHANNEL_EASY_PLACE = "litematicafolia:easy_place";
 
@@ -66,92 +75,84 @@ public final class ProtocolConstants {
 
     /**
      * Packet type identifiers for {@link #CHANNEL_LITEMATICS}. Values
-     * are verbatim from Servux 0.10.x to guarantee wire interop with the
-     * vanilla Litematica client / Servux companion mod.
+     * are verbatim from Servux 0.10.x. Direction tag in each entry:
+     * S2C = server→client, C2S = client→server.
      *
-     * <p>Direction tag in each entry: S2C = server→client, C2S = client→server.
+     * <p>Note: types 10 and 12 ({@code _NBT_STREAM_START}) are
+     * <strong>internal markers</strong> in Servux that trigger the
+     * {@code PacketSplitter} path. They <em>never</em> appear on the
+     * wire — every splitter slice is wrapped as type 11 (S2C) or 13
+     * (C2S). They are listed here only as documentation; the wire
+     * dispatcher should only branch on 11 / 13.
      */
     public static final class Litematics {
         private Litematics() {}
 
-        // ----- handshake -----
-
         /**
-         * S2C — server announces availability + capabilities.
-         * Payload: VarInt(typeId) + NBT(metadata compound).
-         * The metadata compound carries at minimum:
-         *   String  "name"      provider name (e.g. "litematic_data")
-         *   String  "id"        channel identifier
-         *   Int     "version"   protocol version
-         *   String  "servux"    server software identifier
+         * S2C — server announces availability (handshake response).
+         * Payload: {@code NBT(metadata)} where metadata carries
+         * exactly four keys ({@code name}, {@code id},
+         * {@code version}, {@code servux}). Additional keys are
+         * tolerated but Servux clients only look at those four.
          */
         public static final int S2C_METADATA               = 1;
 
         /**
-         * C2S — client requests the metadata compound. Sent after the
-         * client confirms it understands the channel.
-         * Payload: VarInt(typeId) + NBT(empty compound — may carry client
-         * capabilities in future revisions).
+         * C2S — client opens the handshake. Payload: {@code NBT(client
+         * metadata, may be empty)}.
          */
         public static final int C2S_METADATA_REQUEST       = 2;
 
-        // ----- block entity / entity NBT (used for chest contents, signs, …)
-
         /**
-         * C2S — client asks for the BlockEntity NBT at {@code pos}.
-         * Payload: VarInt(typeId) + VarInt(transactionId, ignored —
-         * legacy compat) + BlockPos.
+         * C2S — client asks for the BlockEntity NBT at a position.
+         * Payload: {@code VarInt(transactionId) + BlockPos}.
+         * transactionId is currently ignored on both sides ({@code //
+         * todo: old code compat} in upstream).
          */
         public static final int C2S_BLOCK_ENTITY_REQUEST   = 3;
 
         /**
-         * C2S — client asks for the entity NBT for the entity with
-         * {@code entityId}.
-         * Payload: VarInt(typeId) + VarInt(transactionId, ignored) +
-         * VarInt(entityId).
+         * C2S — client asks for the entity NBT.
+         * Payload: {@code VarInt(transactionId) + VarInt(entityId)}.
          */
         public static final int C2S_ENTITY_REQUEST         = 4;
 
         /**
          * S2C — single BlockEntity NBT reply.
-         * Payload: VarInt(typeId) + BlockPos + NBT(compound).
+         * Payload: {@code BlockPos + NBT(be)}.
          */
         public static final int S2C_BLOCK_NBT_REPLY        = 5;
 
         /**
          * S2C — single Entity NBT reply.
-         * Payload: VarInt(typeId) + VarInt(entityId) + NBT(compound).
+         * Payload: {@code VarInt(entityId) + NBT(entity)}.
          */
         public static final int S2C_ENTITY_NBT_REPLY       = 6;
 
         /**
-         * C2S — bulk dump of every BE+Entity in a chunk.
-         * Payload: VarInt(typeId) + ChunkPos(int x, int z) + NBT.
+         * C2S — bulk request for every BE+Entity in a chunk.
+         * Payload: {@code ChunkPos(int x, int z) + NBT(request body)}.
          */
         public static final int C2S_BULK_NBT_REQUEST       = 7;
 
-        // ----- splitter (for oversized NBT blobs over the 32 KiB C2S cap)
-
         /**
-         * S2C — start frame of a packet-splitter sequence. Carries the
-         * total payload size + the small header NBT compound for the
-         * recipient to allocate / dispatch.
-         * Payload: VarInt(typeId) + NBT(header compound).
+         * <strong>Internal Servux marker</strong> — never appears on the
+         * wire. Indicates that the application payload {@code
+         * (VarInt transactionId + NBT)} should be sent via the
+         * {@link fr.ekaii.litematica.protocol.PacketSplitter}.
          */
         public static final int S2C_NBT_STREAM_START       = 10;
 
         /**
-         * S2C — body slice. All subsequent slices until the buffer is
-         * drained. The first slice writes a VarInt of the total length;
-         * subsequent slices append raw bytes.
-         * Payload: VarInt(typeId) + raw bytes.
+         * S2C — body slice. The first slice of any stream begins with a
+         * {@code VarInt(totalLength)} of the application payload,
+         * inserted by the splitter; subsequent slices are raw bytes.
          */
         public static final int S2C_NBT_STREAM_DATA        = 11;
 
         /**
-         * C2S — start frame of a client → server splitter sequence
-         * (e.g. /paste with a large schematic).
-         * Payload: VarInt(typeId) + NBT(header compound).
+         * <strong>Internal Servux marker</strong> — never appears on the
+         * wire. C2S equivalent of {@link #S2C_NBT_STREAM_START}.
          */
         public static final int C2S_NBT_STREAM_START       = 12;
 
@@ -164,25 +165,21 @@ public final class ProtocolConstants {
 
     // ----------------------------------------------- Structures packet IDs
 
-    /**
-     * Packet type identifiers for {@link #CHANNEL_STRUCTURES}. Verbatim
-     * from Servux 0.10.x. Out of primary scope — only handshake +
-     * registration are stubbed.
-     */
+    /** Packet type identifiers for {@link #CHANNEL_STRUCTURES}. */
     public static final class Structures {
         private Structures() {}
 
-        /** S2C — capability metadata. Payload: VarInt(typeId) + NBT. */
+        /** S2C — capability metadata. Payload: {@code NBT}. */
         public static final int S2C_METADATA               = 1;
-        /** S2C — chunk of structure box data. Payload: VarInt(typeId) + raw bytes (splitter). */
+        /** S2C — splitter slice of structure box data. */
         public static final int S2C_STRUCTURE_DATA         = 2;
-        /** C2S — client registers for streaming. Payload: VarInt(typeId) + NBT. */
+        /** C2S — client registers for streaming. Payload: {@code NBT(may be empty)}. */
         public static final int C2S_REGISTER               = 3;
-        /** C2S — client unregisters. Payload: VarInt(typeId) + NBT (empty). */
+        /** C2S — client unregisters. Payload: {@code NBT(may be empty)}. */
         public static final int C2S_UNREGISTER             = 4;
-        /** S2C — splitter start. Payload: VarInt(typeId) + NBT(header). */
+        /** Internal Servux marker — never appears on the wire (splitter start). */
         public static final int S2C_STRUCTURE_DATA_START   = 5;
-        /** S2C — server spawn / world border / etc. metadata. */
+        /** S2C — spawn / world border metadata. */
         public static final int S2C_SPAWN_METADATA         = 10;
         /** C2S — request spawn / weather metadata. */
         public static final int C2S_REQUEST_SPAWN_METADATA = 11;
@@ -193,45 +190,36 @@ public final class ProtocolConstants {
     // ----------------------------------------------- Easy Place packet IDs
 
     /**
-     * Packet type identifiers for {@link #CHANNEL_EASY_PLACE}. This is a
-     * LitematicaFolia-vendor extension — Servux itself does not ship this
-     * channel today. IDs are new (no upstream constraint).
+     * LitematicaFolia-vendor Easy Place packet IDs. Not on the wire
+     * today — see class javadoc.
      */
     public static final class EasyPlace {
         private EasyPlace() {}
 
-        /**
-         * C2S — client requests placement of a single block.
-         * Payload: VarInt(typeId)
-         *        + BlockPos (long packed)
-         *        + String blockState (vanilla "minecraft:foo[prop=val]" form)
-         *        + Boolean hasItemNbt + (optional) NBT(item compound)
-         *        + Float hitX + Float hitY + Float hitZ
-         *        + VarInt facingOrdinal (0=down,1=up,2=north,3=south,4=west,5=east)
-         *        + VarInt requestId.
-         */
+        /** C2S — client requests placement of a single block. */
         public static final int C2S_PLACE_REQUEST = 1;
 
-        /**
-         * S2C — server acknowledges (or rejects) a place request.
-         * Payload: VarInt(typeId) + VarInt(requestId) + Boolean(success)
-         *        + String(reason)  // empty when success
-         */
+        /** S2C — server acknowledges (or rejects) a place request. */
         public static final int S2C_PLACE_ACK     = 2;
     }
 
-    // ---------------------------------------------------------- metadata keys
+    // ---------------------------------------------------------- metadata
 
-    /** Our server identification string for the handshake. */
+    /** Provider name advertised in the handshake metadata. Matches Servux exactly. */
+    public static final String METADATA_PROVIDER_NAME = "litematic_data";
+
+    /**
+     * Servux's own protocol version for the litematics channel. From
+     * {@code ServuxLitematicaPacket.PROTOCOL_VERSION = 1}.
+     */
+    public static final int LITEMATICS_PROTOCOL_VERSION = 1;
+
+    /**
+     * Servux's own protocol version for the structures channel. From
+     * {@code ServuxStructuresPacket.PROTOCOL_VERSION = 2}.
+     */
+    public static final int STRUCTURES_PROTOCOL_VERSION = 2;
+
+    /** Our server identification string emitted as the {@code servux} key. */
     public static final String SERVER_NAME       = "LitematicaFolia 0.1.0";
-
-    /** Capabilities we advertise. Stored as TAG_LIST of TAG_STRING. */
-    public static final String[] CAPABILITIES = {
-            "easy_place_v3",
-            "direct_paste",
-            "structure_bbox"
-    };
-
-    /** Custom capability protocol version. Independent of Servux's. */
-    public static final int CAPABILITY_PROTOCOL_VERSION = 3;
 }

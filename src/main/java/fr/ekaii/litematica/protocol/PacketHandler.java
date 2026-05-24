@@ -48,7 +48,18 @@ public final class PacketHandler {
 
     // ------------------------------------------------------------- entrypoints
 
-    /** Called by {@link ServuxBridge} for every {@code servux:litematics} payload. */
+    /**
+     * Called by {@link ServuxBridge} for every {@code servux:litematics}
+     * payload. Branches on the leading {@code VarInt(packetType)}:
+     *
+     * <ul>
+     *   <li>Type 2 / 3 / 4 / 7 → handshake + simple BE/Entity/bulk requests.</li>
+     *   <li>Type 13 → outer-splitter slice for Direct Paste. Type 12
+     *       ({@code _NBT_STREAM_START}) does not appear on the wire
+     *       (internal Servux marker) — see
+     *       {@link fr.ekaii.litematica.protocol.handler.DirectPasteHandler}.</li>
+     * </ul>
+     */
     public void onLitematicsPacket(String channel, Player player, byte[] payload) {
         if (!checkBaseGate(player)) return;
         try {
@@ -63,9 +74,13 @@ public final class PacketHandler {
                     metadata.onEntityRequest(player, r);
                 case ProtocolConstants.Litematics.C2S_BULK_NBT_REQUEST ->
                     metadata.onBulkRequest(player, r);
-                case ProtocolConstants.Litematics.C2S_NBT_STREAM_START,
-                     ProtocolConstants.Litematics.C2S_NBT_STREAM_DATA ->
-                    directPaste.onStreamFrame(player, type, r);
+                case ProtocolConstants.Litematics.C2S_NBT_STREAM_DATA ->
+                    directPaste.onSplitterSlice(player, r);
+                case ProtocolConstants.Litematics.C2S_NBT_STREAM_START ->
+                    // Servux never emits this on the wire; if a client
+                    // does, treat it as the first slice of a stream so we
+                    // are more tolerant than the upstream receiver.
+                    directPaste.onSplitterSlice(player, r);
                 default -> LOG.warning("unknown servux:litematics packet type " + type
                         + " from " + player.getName());
             }

@@ -94,9 +94,20 @@ public final class ServuxBridge {
             messenger.registerIncomingPluginChannel(owner, ProtocolConstants.CHANNEL_STRUCTURES,
                     packetHandler::onStructuresPacket);
 
-            messenger.registerOutgoingPluginChannel(owner, ProtocolConstants.CHANNEL_EASY_PLACE);
-            messenger.registerIncomingPluginChannel(owner, ProtocolConstants.CHANNEL_EASY_PLACE,
-                    packetHandler::onEasyPlacePacket);
+            // Easy Place V3 is NOT a custom Servux packet — Servux drives
+            // it via the X-fractional component of the vanilla
+            // ServerboundUseItemOnPacket. The litematicafolia:easy_place
+            // channel was a draft idea; not part of the on-wire Servux
+            // protocol. We therefore do NOT register it by default. If
+            // protocol.enableEasyPlaceChannel is explicitly set we honour
+            // the legacy registration so smoke tests can still exercise
+            // the dispatcher.
+            if (plugin.getConfig().getBoolean("protocol.enableEasyPlaceChannel", false)) {
+                messenger.registerOutgoingPluginChannel(owner, ProtocolConstants.CHANNEL_EASY_PLACE);
+                messenger.registerIncomingPluginChannel(owner, ProtocolConstants.CHANNEL_EASY_PLACE,
+                        packetHandler::onEasyPlacePacket);
+                LOG.info("Vendor channel " + ProtocolConstants.CHANNEL_EASY_PLACE + " registered (legacy)");
+            }
         } catch (Throwable t) {
             LOG.log(Level.SEVERE, "Failed to register Servux channels", t);
             return false;
@@ -104,8 +115,7 @@ public final class ServuxBridge {
 
         enabled = true;
         LOG.info("Servux bridge online — channels: " + ProtocolConstants.CHANNEL_LITEMATICS
-                + ", " + ProtocolConstants.CHANNEL_STRUCTURES
-                + ", " + ProtocolConstants.CHANNEL_EASY_PLACE);
+                + ", " + ProtocolConstants.CHANNEL_STRUCTURES);
         return true;
     }
 
@@ -118,8 +128,14 @@ public final class ServuxBridge {
             messenger.unregisterOutgoingPluginChannel(plugin, ProtocolConstants.CHANNEL_LITEMATICS);
             messenger.unregisterIncomingPluginChannel(plugin, ProtocolConstants.CHANNEL_STRUCTURES);
             messenger.unregisterOutgoingPluginChannel(plugin, ProtocolConstants.CHANNEL_STRUCTURES);
-            messenger.unregisterIncomingPluginChannel(plugin, ProtocolConstants.CHANNEL_EASY_PLACE);
-            messenger.unregisterOutgoingPluginChannel(plugin, ProtocolConstants.CHANNEL_EASY_PLACE);
+            // Easy place channel may or may not have been registered;
+            // unregistering an unregistered channel is a silent no-op on
+            // Paper.
+            try {
+                messenger.unregisterIncomingPluginChannel(plugin, ProtocolConstants.CHANNEL_EASY_PLACE);
+                messenger.unregisterOutgoingPluginChannel(plugin, ProtocolConstants.CHANNEL_EASY_PLACE);
+            } catch (Throwable ignored) {
+            }
         } catch (Throwable t) {
             LOG.log(Level.WARNING, "Cleanup error", t);
         }

@@ -7,47 +7,58 @@ import fr.ekaii.litematica.paste.PasteOperation;
 import fr.ekaii.litematica.paste.PasteOptions;
 import fr.ekaii.litematica.paste.PasteResult;
 import fr.ekaii.litematica.protocol.PacketHandler;
+import fr.ekaii.litematica.protocol.PacketSplitter;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Receives a {@code .litematic} payload streamed in chunks from a Servux
- * client, reassembles it, and runs it through the standard
- * {@link PasteOperation} pipeline.
+ * Receives a Direct Paste stream from a Servux client and reassembles
+ * it into a {@link LitematicSchematic} that runs through
+ * {@link PasteOperation}.
  *
- * <h2>Wire format</h2>
+ * <h2>Wire model (corrected v2 — see SERVUX_WIRE_FORMAT.md)</h2>
+ *
+ * <p>Servux uses a <em>two-layer</em> splitter for Direct Paste:
+ *
  * <ol>
- *   <li>C2S {@link ProtocolConstants.Litematics#C2S_NBT_STREAM_START} —
- *       carries a small NBT compound describing the upcoming stream
- *       (transaction id, target world, origin x/y/z, paste options).
- *       Servux uses the {@code Task} field with values like
- *       {@code "Litematic-TransmitStart"} / {@code "Litematic-TransmitData"} /
- *       {@code "Litematic-TransmitEnd"}.</li>
- *   <li>C2S {@link ProtocolConstants.Litematics#C2S_NBT_STREAM_DATA} —
- *       body slices. The first slice writes a VarInt of the total
- *       payload length, then raw bytes; subsequent slices are raw bytes
- *       continuing from where the previous slice ended. The reassembled
- *       payload is itself a VarInt(transactionType) + NBT(compound).</li>
+ *   <li><strong>Outer (Servux PacketSplitter)</strong>. Every
+ *       application-level payload {@code (VarInt transactionId + NBT
+ *       compound)} is chunked into N raw byte slices, each wrapped as
+ *       a {@code PACKET_C2S_NBT_RESPONSE_DATA} (type 13) wire packet.
+ *       The very first slice has a {@code VarInt(totalLen)} of the
+ *       application payload prepended. <em>The {@code _NBT_STREAM_START}
+ *       packet types (10 / 12) never travel on the wire</em>: they are
+ *       internal Servux markers triggering the splitter path.</li>
+ *   <li><strong>Inner (Litematic-Transmit sub-protocol)</strong>. Each
+ *       reassembled application payload's NBT compound carries a
+ *       {@code Task} field with one of {@code Litematic-TransmitStart},
+ *       {@code Litematic-TransmitData}, {@code Litematic-TransmitEnd},
+ *       {@code Litematic-TransmitCancel}. A {@code SliceKey} (random
+ *       long) ties together multiple of these compounds across the
+ *       lifetime of a single file transfer. The actual {@code .litematic}
+ *       bytes are carried in the {@code Data} byte-array of each
+ *       {@code Litematic-TransmitData} compound.</li>
  * </ol>
  *
- * <h2>Reuse of PasteOperation</h2>
- * On stream completion we instantiate a {@link LitematicSchematic} via
- * {@link LitematicReader#fromCompound}, build a {@link PasteOptions}
- * from defaults + per-request overrides, and call
- * {@link PasteOperation#execute()}. The handler does not duplicate any
- * placement logic.
+ * <h2>Why this matters</h2>
+ *
+ * <p>The previous draft of this handler assumed type 12 carried a
+ * header NBT and type 13 carried raw bytes that accumulated to form
+ * the schematic. That model is incompatible with any real Servux
+ * client. The on-wire stream is purely type-13 packets all the way
+ * through; only the outer splitter reassembles them; and the
+ * Transmit sub-protocol lives entirely inside the resulting NBT
+ * compound.
  */
 public final class DirectPasteHandler {
 
@@ -55,89 +66,171 @@ public final class DirectPasteHandler {
 
     private final Plugin plugin;
 
-    /** In-progress streams keyed by player UUID. */
-    private final Map<UUID, StreamSession> sessions = new HashMap<>();
+    /** Outer-splitter reassembly state, per player. */
+    private final PacketSplitter splitter = new PacketSplitter();
+
+    /** Inner Transmit-protocol state, keyed by Servux {@code SliceKey}. */
+    private final Map<Long, TransmitSession> transmits = new HashMap<>();
+
+    /** Map UUID → SliceKey so we can drop sessions on disconnect. */
+    private final Map<UUID, Long> playerSessions = new HashMap<>();
 
     public DirectPasteHandler(Plugin plugin) {
         this.plugin = plugin;
     }
 
-    /** Common entrypoint for both STREAM_START and STREAM_DATA frames. */
-    public void onStreamFrame(Player player, int packetType, ProtocolBuffer.Reader r) throws Exception {
+    /**
+     * Entry point for any inbound {@code C2S_NBT_STREAM_DATA} (type 13)
+     * slice. The {@code C2S_NBT_STREAM_START} (type 12) "packet type" is
+     * not handled here because it does not appear on the wire — see
+     * class javadoc.
+     */
+    public void onSplitterSlice(Player player, ProtocolBuffer.Reader r) {
         if (!player.hasPermission(PacketHandler.PERM_PASTE) && !player.isOp()) {
             LOG.fine("paste denied: " + player.getName() + " lacks " + PacketHandler.PERM_PASTE);
             return;
         }
 
         UUID uid = player.getUniqueId();
-        if (packetType == ProtocolConstants.Litematics.C2S_NBT_STREAM_START) {
-            LitematicNbt.NbtCompound header;
-            try {
-                header = r.readNbt();
-            } catch (Throwable t) {
-                LOG.warning("STREAM_START: bad NBT header — " + t.getMessage());
-                return;
-            }
-            sessions.put(uid, new StreamSession(uid, header));
+        byte[] sliceBody = r.readRemainingBytes();
+        byte[] assembled;
+        try {
+            assembled = splitter.receive(uid, sliceBody);
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "splitter feed failed for " + player.getName(), t);
+            splitter.forget(uid);
+            return;
+        }
+        if (assembled == null) {
+            return;  // need more slices
+        }
+
+        // Decode (VarInt transactionId + NBT(compound)) of the
+        // application-layer payload Servux flushed.
+        ProtocolBuffer.Reader payloadReader = new ProtocolBuffer.Reader(assembled);
+        int transactionId;
+        LitematicNbt.NbtCompound payload;
+        try {
+            transactionId = payloadReader.readVarInt();
+            payload = payloadReader.readNbt();
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "splitter payload parse failed for " + player.getName(), t);
+            return;
+        }
+        if (payload == null) {
+            LOG.warning("splitter payload had null NBT root for " + player.getName());
+            return;
+        }
+        handleTransmitFrame(player, transactionId, payload);
+    }
+
+    /**
+     * Process one Transmit-protocol frame (the NBT compound carried by
+     * one outer-splitter payload).
+     */
+    private void handleTransmitFrame(Player player, int transactionId,
+                                     LitematicNbt.NbtCompound payload) {
+        String task = orEmpty(payload.getString("Task"));
+        Long sliceKey = payload.getLong("SliceKey");
+        if (task.isEmpty() || sliceKey == null) {
+            LOG.warning("Transmit frame missing Task / SliceKey from " + player.getName()
+                    + " — task=" + task + " key=" + sliceKey);
             return;
         }
 
-        // STREAM_DATA
-        StreamSession session = sessions.get(uid);
-        if (session == null) {
-            LOG.warning("STREAM_DATA without START for " + player.getName());
-            return;
-        }
-        byte[] slice = r.readRemainingBytes();
-        boolean done = session.appendSlice(slice);
-        if (done) {
-            sessions.remove(uid);
-            handleAssembled(player, session);
+        switch (task) {
+            case "Litematic-TransmitStart" -> {
+                TransmitSession s = new TransmitSession(player.getUniqueId(), sliceKey, payload);
+                transmits.put(sliceKey, s);
+                playerSessions.put(player.getUniqueId(), sliceKey);
+            }
+            case "Litematic-TransmitData" -> {
+                TransmitSession s = transmits.get(sliceKey);
+                if (s == null) {
+                    LOG.warning("Transmit DATA for unknown SliceKey " + sliceKey
+                            + " from " + player.getName());
+                    return;
+                }
+                Integer size = payload.getInt("Size");
+                byte[] data = payload.getByteArray("Data");
+                if (size == null || data == null || size < 0) {
+                    LOG.warning("Transmit DATA missing Size/Data for SliceKey " + sliceKey);
+                    return;
+                }
+                int n = Math.min(size, data.length);
+                if (n > 0) {
+                    s.sink.write(data, 0, n);
+                }
+            }
+            case "Litematic-TransmitEnd" -> {
+                TransmitSession s = transmits.remove(sliceKey);
+                playerSessions.remove(player.getUniqueId());
+                if (s == null) {
+                    LOG.warning("Transmit END for unknown SliceKey " + sliceKey
+                            + " from " + player.getName());
+                    return;
+                }
+                Integer totalSize = payload.getInt("TotalSize");
+                if (totalSize != null && totalSize != s.sink.size()) {
+                    LOG.warning("Transmit END size mismatch for SliceKey " + sliceKey
+                            + ": expected " + totalSize + " got " + s.sink.size());
+                }
+                completeAssembly(player, s);
+            }
+            case "Litematic-TransmitCancel" -> {
+                transmits.remove(sliceKey);
+                playerSessions.remove(player.getUniqueId());
+                LOG.info("Transmit cancelled for SliceKey " + sliceKey
+                        + " by " + player.getName());
+            }
+            default -> LOG.fine("ignoring Direct Paste task '" + task
+                    + "' (transactionId=" + transactionId + ") from " + player.getName());
         }
     }
 
-    private void handleAssembled(Player player, StreamSession session) {
+    private void completeAssembly(Player player, TransmitSession session) {
+        byte[] fileBytes = session.sink.toByteArray();
         try {
-            byte[] full = session.assembled();
-            // The reassembled payload is (VarInt transactionType) + (NBT compound).
-            ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(full);
-            int transactionType;
-            try {
-                transactionType = r.readVarInt();
-            } catch (Throwable t) {
-                LOG.warning("paste payload missing transactionType");
-                return;
-            }
-            LitematicNbt.NbtCompound payload = r.readNbt();
-            if (payload == null) {
-                LOG.warning("paste payload missing root compound");
-                return;
-            }
+            // Servux ships the raw gzipped .litematic file bytes via the
+            // Data slices, so feed them to the standard reader.
+            LitematicSchematic schem = LitematicReader.read(fileBytes);
 
-            // The schematic NBT is shipped as a sub-compound. Servux uses
-            // the "Schematic" key for the full litematic root (per
-            // LitematicaSchematic.receiveFileTransmit conventions).
-            LitematicNbt.NbtCompound schemRoot = payload.getCompound("Schematic");
-            if (schemRoot == null) {
-                LOG.warning("paste payload has no 'Schematic' compound — type=" + transactionType);
-                return;
-            }
-            LitematicSchematic schem = LitematicReader.fromCompound(schemRoot);
+            Location origin   = readOrigin(session.placementData, player);
+            PasteOptions opts = readOptions(session.placementData, origin);
 
-            Location origin = readOrigin(payload, player);
-            PasteOptions opts = readOptions(payload, origin);
             new PasteOperation(plugin, schem, opts).execute()
                     .whenComplete((res, err) -> reportComplete(player, res, err));
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "direct paste assembly failed", t);
+            LOG.log(Level.WARNING, "Direct Paste assembly failed", t);
+            try {
+                player.sendMessage("[LitematicaFolia] direct paste failed: "
+                        + t.getClass().getSimpleName());
+            } catch (Throwable ignored) {
+            }
         }
+    }
+
+    /** Called from the bridge when a player disconnects. */
+    public void onPlayerQuit(UUID player) {
+        splitter.forget(player);
+        Long key = playerSessions.remove(player);
+        if (key != null) {
+            transmits.remove(key);
+        }
+    }
+
+    // ------------------------------------------------------- helpers
+
+    private static String orEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     private void reportComplete(Player player, PasteResult res, Throwable err) {
         try {
             if (err != null) {
                 LOG.log(Level.WARNING, "direct paste failed for " + player.getName(), err);
-                player.sendMessage("[LitematicaFolia] paste failed: " + err.getClass().getSimpleName());
+                player.sendMessage("[LitematicaFolia] paste failed: "
+                        + err.getClass().getSimpleName());
                 return;
             }
             String msg = "[LitematicaFolia] pasted " + res.blocksPlaced()
@@ -151,11 +244,13 @@ public final class DirectPasteHandler {
     }
 
     private Location readOrigin(LitematicNbt.NbtCompound payload, Player player) {
+        if (payload == null) {
+            return player.getLocation().clone();
+        }
         Integer x = payload.getInt("OriginX");
         Integer y = payload.getInt("OriginY");
         Integer z = payload.getInt("OriginZ");
         if (x == null || y == null || z == null) {
-            // Fallback: paste at the player's feet.
             return player.getLocation().clone();
         }
         return new Location(player.getWorld(), x, y, z);
@@ -163,6 +258,9 @@ public final class DirectPasteHandler {
 
     private PasteOptions readOptions(LitematicNbt.NbtCompound payload, Location origin) {
         PasteOptions defaults = PasteOptions.defaults(origin);
+        if (payload == null) {
+            return defaults;
+        }
         Byte placeEntities      = payload.getByte("PlaceEntities");
         Byte placeTileEntities  = payload.getByte("PlaceTileEntities");
         Byte placePendingTicks  = payload.getByte("PlacePendingTicks");
@@ -182,56 +280,19 @@ public final class DirectPasteHandler {
                 null);
     }
 
-    // ----------------------------------------------------------- stream state
+    // --------------------------------------------------- Transmit session
 
-    /**
-     * Accumulates the slices of a single client → server splitter stream.
-     * The first slice declares the total length as a leading VarInt.
-     */
-    private static final class StreamSession {
+    /** Accumulates the {@code Litematic-TransmitData} byte slices for one upload. */
+    private static final class TransmitSession {
         final UUID player;
-        final LitematicNbt.NbtCompound header;
-        private final java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
-        private int totalLength = -1;
-        private final AtomicInteger received = new AtomicInteger();
+        final long sliceKey;
+        final ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        final LitematicNbt.NbtCompound placementData;
 
-        StreamSession(UUID player, LitematicNbt.NbtCompound header) {
-            this.player = player;
-            this.header = header == null ? new LitematicNbt.NbtCompound() : header;
-        }
-
-        /** @return true when the full stream has been received. */
-        boolean appendSlice(byte[] slice) throws java.io.IOException {
-            if (slice.length == 0) return totalLength >= 0 && received.get() >= totalLength;
-            if (totalLength < 0) {
-                // First slice: VarInt total length, then bytes.
-                DataInputStream dis = new DataInputStream(new ByteArrayInputStream(slice));
-                int len = 0;
-                int shift = 0;
-                int consumed = 0;
-                int b;
-                do {
-                    b = dis.readByte() & 0xFF;
-                    consumed++;
-                    len |= (b & 0x7F) << shift;
-                    shift += 7;
-                    if (shift >= 35) throw new java.io.IOException("VarInt too long in stream");
-                } while ((b & 0x80) != 0);
-                totalLength = len;
-                int bodyLen = slice.length - consumed;
-                if (bodyLen > 0) {
-                    sink.write(slice, consumed, bodyLen);
-                    received.addAndGet(bodyLen);
-                }
-            } else {
-                sink.write(slice, 0, slice.length);
-                received.addAndGet(slice.length);
-            }
-            return totalLength >= 0 && received.get() >= totalLength;
-        }
-
-        byte[] assembled() {
-            return sink.toByteArray();
+        TransmitSession(UUID player, long sliceKey, LitematicNbt.NbtCompound startFrame) {
+            this.player    = player;
+            this.sliceKey  = sliceKey;
+            this.placementData = startFrame.getCompound("PlacementData");
         }
     }
 }

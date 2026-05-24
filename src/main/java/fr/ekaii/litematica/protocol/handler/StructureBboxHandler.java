@@ -46,10 +46,12 @@ public final class StructureBboxHandler {
         subscribers.add(player.getUniqueId());
 
         // Reply with capability metadata so the client knows we know.
+        // Same 4-key layout as the litematics handshake — Servux's
+        // StructureDataProvider uses the same convention.
         LitematicNbt.NbtCompound meta = new LitematicNbt.NbtCompound();
         meta.putString("name", "structure_data");
         meta.putString("id",   ProtocolConstants.CHANNEL_STRUCTURES);
-        meta.putInt   ("version", 2);   // matches Servux's structures PROTOCOL_VERSION
+        meta.putInt   ("version", ProtocolConstants.STRUCTURES_PROTOCOL_VERSION);
         meta.putString("servux", ProtocolConstants.SERVER_NAME);
         byte[] reply = PacketHandler.buildStructures(
                 ProtocolConstants.Structures.S2C_METADATA,

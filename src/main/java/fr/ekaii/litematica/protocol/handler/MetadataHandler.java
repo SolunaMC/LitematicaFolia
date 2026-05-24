@@ -7,8 +7,6 @@ import fr.ekaii.litematica.protocol.ProtocolConstants;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.logging.Logger;
 
 /**
@@ -17,25 +15,15 @@ import java.util.logging.Logger;
  * <p>When a Servux-equipped client joins, the client opens the
  * {@code servux:litematics} channel and immediately sends a
  * {@link ProtocolConstants.Litematics#C2S_METADATA_REQUEST}. We respond
- * with {@link ProtocolConstants.Litematics#S2C_METADATA} carrying:
- * <ul>
- *   <li>{@code String "name"} — provider name (matches Servux convention).</li>
- *   <li>{@code String "id"}   — channel identifier.</li>
- *   <li>{@code Int    "version"} — Servux-protocol version for compatibility
- *       (we emit {@code 1} to match Servux's
- *       {@code ServuxLitematicaPacket.PROTOCOL_VERSION}).</li>
- *   <li>{@code String "servux"} — server software identifier.</li>
- *   <li>{@code String "ServerVersion"}   — {@code "LitematicaFolia 0.1.0"}.</li>
- *   <li>{@code List   "Capabilities"}    — strings advertised to clients.</li>
- *   <li>{@code Int    "ProtocolVersion"} — our extension version (3).</li>
- * </ul>
+ * with {@link ProtocolConstants.Litematics#S2C_METADATA} carrying the
+ * canonical Servux metadata compound (see
+ * {@link #buildMetadataPayload()}).
+ *
+ * <p>Source of truth: upstream {@code LitematicsDataProvider.java:69-72}.
  */
 public final class MetadataHandler {
 
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/MetadataHandler");
-
-    /** Servux's own protocol version for the {@code servux:litematics} channel. */
-    private static final int SERVUX_LITEMATICS_PROTOCOL = 1;
 
     private final Plugin plugin;
 
@@ -44,8 +32,8 @@ public final class MetadataHandler {
     }
 
     /**
-     * C2S {@code MetadataRequest} → S2C {@code MetadataResponse} with our
-     * capability set.
+     * C2S {@code MetadataRequest} → S2C {@code MetadataResponse} with the
+     * canonical 4-key Servux metadata compound.
      */
     public void onMetadataRequest(Player player, ProtocolBuffer.Reader r) throws Exception {
         // Drain any optional NBT the client may send (Servux currently
@@ -59,23 +47,34 @@ public final class MetadataHandler {
         player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, bytes);
     }
 
+    /**
+     * Build the canonical 4-key Servux metadata compound:
+     * <ul>
+     *   <li>{@code "name"}    — provider name; Servux convention is
+     *       {@code "litematic_data"}.</li>
+     *   <li>{@code "id"}      — channel identifier
+     *       ({@code "servux:litematics"}).</li>
+     *   <li>{@code "version"} — provider protocol version (1 for
+     *       Litematica per upstream
+     *       {@code ServuxLitematicaPacket.PROTOCOL_VERSION}).</li>
+     *   <li>{@code "servux"}  — server software identifier; Servux uses
+     *       its own {@code MOD_STRING}, we emit
+     *       {@link ProtocolConstants#SERVER_NAME} which any reasonable
+     *       client treats as opaque.</li>
+     * </ul>
+     * Servux clients ignore unknown keys; we deliberately do NOT emit
+     * the previously-drafted {@code ServerVersion},
+     * {@code ProtocolVersion}, or {@code Capabilities} keys because
+     * (a) they don't exist on the upstream wire and (b) the
+     * "Capabilities" path was tied to an Easy Place V3 design that
+     * Servux does not implement as a custom packet anyway.
+     */
     public LitematicNbt.NbtCompound buildMetadataPayload() {
         LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
-        c.putString("name",    "litematic_data");
+        c.putString("name",    ProtocolConstants.METADATA_PROVIDER_NAME);
         c.putString("id",      ProtocolConstants.CHANNEL_LITEMATICS);
-        c.putInt   ("version", SERVUX_LITEMATICS_PROTOCOL);
+        c.putInt   ("version", ProtocolConstants.LITEMATICS_PROTOCOL_VERSION);
         c.putString("servux",  ProtocolConstants.SERVER_NAME);
-
-        // Our extension keys (announced as additional fields so older
-        // Servux clients simply ignore them).
-        c.putString("ServerVersion",   ProtocolConstants.SERVER_NAME);
-        c.putInt   ("ProtocolVersion", ProtocolConstants.CAPABILITY_PROTOCOL_VERSION);
-
-        List<LitematicNbt.NbtTag> caps = new ArrayList<>();
-        for (String cap : ProtocolConstants.CAPABILITIES) {
-            caps.add(new LitematicNbt.NbtString(cap));
-        }
-        c.put("Capabilities", new LitematicNbt.NbtList(LitematicNbt.TAG_STRING, caps));
         return c;
     }
 

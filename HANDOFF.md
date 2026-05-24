@@ -8,7 +8,26 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~05:40 — **v0.1.0 LIVE in prod, autonomous loop terminated**)
+## State (last tick: 2026-05-24 — P11a Servux wire-format alignment)
+
+### P11a — Servux wire format validated against source (2026-05-24)
+
+- Cloned upstream `sakura-ryoko/servux` at tag `26.1.2-0.10.2` to `/tmp/servux-source` for read-only inspection (no source imported into our repo — LGPL clean).
+- Produced `SERVUX_WIRE_FORMAT.md` at the repo root: full spec of every Litematics + Structures packet, primitive encodings, splitter algorithm, Direct Paste sub-protocol, Easy Place V3 reality check. Each table cross-references the exact upstream source line.
+- **7 discrepancies fixed in `protocol/*.java`** vs the v0.1.0 scaffolded draft:
+  1. Metadata compound was over-specified (`ServerVersion`, `ProtocolVersion`, `Capabilities` extras). Servux clients only consume the 4 canonical keys (`name`, `id`, `version`, `servux`). Stripped.
+  2. `ChunkPos` was encoded as two `Int`s. Mojang's `FriendlyByteBuf#writeChunkPos` on MC 26.1.x writes a packed long via `ChunkPos.pack()` (low 32 bits = x, high 32 bits = z). Fixed in `ProtocolBuffer.{read,write}ChunkPos`.
+  3. `DirectPasteHandler` was modelled as `STREAM_START → STREAM_DATA*`. **Wrong.** The packet-12 `_NBT_STREAM_START` type never appears on the wire — it is an internal Servux marker that triggers the splitter path. The wire is purely type-13 slices. Rewrote the handler around the actual two-layer model: outer splitter reassembles `(VarInt txnId + NBT)` payloads, and the inner Transmit sub-protocol dispatches on the `Task` field inside the resulting NBT (`Litematic-TransmitStart`/`Data`/`End`/`Cancel`, keyed by `SliceKey`).
+  4. New `protocol/PacketSplitter.java` with `split()` + per-player `receive()` matching Servux's `PacketSplitter.send/receive`. First-slice has VarInt(totalLen) prefix; subsequent slices are raw bytes; receiver caps at 16 MiB.
+  5. **Easy Place V3 is not a Servux packet.** Servux drives it via a server-side mixin that decodes the protocol value from the X-fractional component of the vanilla `ServerboundUseItemOnPacket`. Our `litematicafolia:easy_place` channel was unfounded. Channel registration is now gated by `protocol.enableEasyPlaceChannel` (default false); the handler + DTO remain for future re-use, but the channel is no longer claimed during handshake.
+  6. `CHANNEL_METADATA` was previously aliased the same as `CHANNEL_LITEMATICS` with confusing javadoc suggesting a separate channel. Re-documented as deprecated alias.
+  7. `PacketHandler` dispatcher previously routed both type 12 and type 13 to a single "stream frame" entrypoint. Now routes 13 → `onSplitterSlice`; type 12 is tolerated (forwarded to splitter) but never emitted by upstream.
+- New `src/test/java/fr/ekaii/litematica/protocol/ServuxByteCompatibilityTest.java`:
+  - 10 hand-computed reference byte sequences (`VarInt(-1) = FF FF FF FF 0F`, packed BlockPos, packed ChunkPos, full `C2S_BLOCK_ENTITY_REQUEST` / `C2S_ENTITY_REQUEST` / `C2S_BULK_NBT_REQUEST` / `S2C_BLOCK_NBT_REPLY` / `S2C_METADATA` byte layouts, PacketSplitter round-trip).
+  - Each test asserts byte equality on the writer output AND round-trips through the reader. These tests prove our writer/reader pair agrees byte-for-byte with the upstream Servux wire format.
+- `./gradlew build` GREEN. `./gradlew test` GREEN — **46 tests** (34 prior + 1 stress-skipped + 1 new fixture round-trip + 10 byte-compat).
+
+## State (previous tick: 2026-05-24 ~05:40 — **v0.1.0 LIVE in prod, autonomous loop terminated**)
 
 ### Production hot-load (2026-05-24)
 

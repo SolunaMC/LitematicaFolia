@@ -30,7 +30,11 @@ import java.nio.charset.StandardCharsets;
  *   <li><b>BlockPos</b>: packed as a single signed long.
  *       {@code ((x & 0x3FFFFFF) << 38) | ((z & 0x3FFFFFF) << 12) | (y & 0xFFF)}.
  *       This is the canonical Minecraft wire form.</li>
- *   <li><b>ChunkPos</b>: two consecutive ints (x, z).</li>
+ *   <li><b>ChunkPos</b> (MC 26.1.x): packed long
+ *       {@code (x & 0xFFFFFFFFL) | ((z & 0xFFFFFFFFL) << 32)} written
+ *       big-endian. Matches Mojang's
+ *       {@code FriendlyByteBuf#writeChunkPos} which delegates to
+ *       {@code ChunkPos.pack()}.</li>
  *   <li><b>NBT</b> (1.20.2+): anonymous root — single byte tag id, then
  *       payload (no root name UTF). An end tag (0) means "empty / null".</li>
  * </ul>
@@ -126,10 +130,14 @@ public final class ProtocolBuffer {
             return new int[] {x, y, z};
         }
 
-        /** Reads a ChunkPos as {x, z}. */
+        /**
+         * Reads a ChunkPos as {@code {x, z}}. MC 26.1.x writes ChunkPos as
+         * a packed signed long: low 32 bits = x, high 32 bits = z. Big-endian.
+         */
         public int[] readChunkPos() throws IOException {
-            int x = readInt();
-            int z = readInt();
+            long packed = readLong();
+            int x = (int) (packed & 0xFFFFFFFFL);
+            int z = (int) ((packed >>> 32) & 0xFFFFFFFFL);
             return new int[] {x, z};
         }
 
@@ -258,10 +266,16 @@ public final class ProtocolBuffer {
             return this;
         }
 
-        /** Writes a ChunkPos (two ints). */
+        /**
+         * Writes a ChunkPos as Mojang's
+         * {@code FriendlyByteBuf#writeChunkPos} does — a single packed
+         * signed long where low 32 bits are {@code x} and high 32 bits
+         * are {@code z}, big-endian. (Previous draft wrote two ints; that
+         * byte order is incompatible with Servux's encoder on MC 26.1.x.)
+         */
         public Writer writeChunkPos(int x, int z) throws IOException {
-            writeInt(x);
-            writeInt(z);
+            long packed = ((long) x & 0xFFFFFFFFL) | (((long) z & 0xFFFFFFFFL) << 32);
+            writeLong(packed);
             return this;
         }
 
