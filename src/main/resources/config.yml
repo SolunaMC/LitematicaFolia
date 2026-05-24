@@ -41,6 +41,13 @@ protocol:
   # the placed block's facing to match the schematic. No-op for vanilla
   # clients. Default off until smoke-tested against a real client.
   enableEasyPlace: false
+  # Cap on the reassembled-size of a single Direct Paste upload via the
+  # Servux outer-splitter. Default 128 MiB — raise if you expect schematics
+  # whose NBT serialisation exceeds this; lower for hostile clients. NB:
+  # Litematica's own client-side threshold for switching from inline
+  # LitematicaPaste to the multi-frame sliceForServux is 64 MiB, so a 128
+  # MiB cap covers the inline path comfortably with room for outliers.
+  maxDirectPasteSize: 134217728
 
 fawe:
   # Register a FAWE ClipboardFormat for .litematic when FAWE is detected.

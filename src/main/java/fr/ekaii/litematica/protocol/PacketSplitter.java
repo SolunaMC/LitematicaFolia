@@ -32,12 +32,15 @@ import java.util.UUID;
 public final class PacketSplitter {
 
     /**
-     * Default cap on the size of a reassembled C2S buffer. Matches
-     * Servux's {@code DEFAULT_MAX_RECEIVE_SIZE_C2S = 16 MiB}. Beyond
-     * this we abort the session and log a warning rather than allocate
-     * unbounded memory.
+     * Default cap on the size of a reassembled C2S buffer. Servux upstream
+     * sets {@code DEFAULT_MAX_RECEIVE_SIZE_C2S = 16 MiB}; we raise the
+     * default to 128 MiB so Litematica's inline {@code LitematicaPaste}
+     * path (used for schematics ≤ 64 MiB NBT, i.e. anything not heavy
+     * enough to trigger the multi-frame {@code sliceForServux} flow) can
+     * carry multi-million block placements without the splitter session
+     * aborting silently.
      */
-    public static final int DEFAULT_MAX_C2S_RECEIVE = 16 * 1024 * 1024;
+    public static final int DEFAULT_MAX_C2S_RECEIVE = 128 * 1024 * 1024;
 
     private final Map<UUID, Session> sessions = new HashMap<>();
     private final int maxSize;

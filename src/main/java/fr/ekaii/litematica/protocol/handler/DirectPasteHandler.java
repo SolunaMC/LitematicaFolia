@@ -66,8 +66,12 @@ public final class DirectPasteHandler {
 
     private final Plugin plugin;
 
-    /** Outer-splitter reassembly state, per player. */
-    private final PacketSplitter splitter = new PacketSplitter();
+    /**
+     * Outer-splitter reassembly state, per player. Cap is configurable via
+     * {@code protocol.maxDirectPasteSize} (default 128 MiB) so server ops
+     * can raise it when 32M+ block schematics are expected.
+     */
+    private final PacketSplitter splitter;
 
     /** Inner Transmit-protocol state, keyed by Servux {@code SliceKey}. */
     private final Map<Long, TransmitSession> transmits = new HashMap<>();
@@ -77,6 +81,11 @@ public final class DirectPasteHandler {
 
     public DirectPasteHandler(Plugin plugin) {
         this.plugin = plugin;
+        int cap = plugin.getConfig().getInt("protocol.maxDirectPasteSize",
+                PacketSplitter.DEFAULT_MAX_C2S_RECEIVE);
+        this.splitter = new PacketSplitter(cap);
+        LOG.info("[direct-paste] outer-splitter cap = "
+                + (cap / (1024 * 1024)) + " MiB");
     }
 
     /**
@@ -97,13 +106,22 @@ public final class DirectPasteHandler {
         try {
             assembled = splitter.receive(uid, sliceBody);
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "splitter feed failed for " + player.getName(), t);
+            LOG.warning("[direct-paste] splitter rejected slice from " + player.getName()
+                    + " — " + t.getMessage()
+                    + " (raise protocol.maxDirectPasteSize if expected)");
+            try {
+                player.sendMessage("[LitematicaFolia] direct paste aborted: " + t.getMessage()
+                        + ". Schematic too big — ask staff to raise protocol.maxDirectPasteSize "
+                        + "or upload it server-side.");
+            } catch (Throwable ignored) { }
             splitter.forget(uid);
             return;
         }
         if (assembled == null) {
             return;  // need more slices
         }
+        LOG.info("[direct-paste] splitter reassembled " + assembled.length + " bytes from "
+                + player.getName());
 
         // Decode (VarInt transactionId + NBT(compound)) of the
         // application-layer payload Servux flushed.
