@@ -59,6 +59,8 @@ FAIL_PATTERNS=(
     'SEVERE.*[Ll]itematica'
     'Exception.*LitematicaFolia'
     'Could not load plugin'
+    'Error loading plugin'
+    'Initialized 0 plugins'
     'RegionFileSizeException'
     'Region file corruption'
     '\[STDERR\]'
@@ -216,7 +218,7 @@ fi
 
 # Also accept anything matching luminol*.jar already present.
 if [[ -z "${SERVER_JAR}" ]]; then
-    cand="$(ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null | head -n1)"
+    cand="$(ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null | head -n1 || true)"
     if [[ -n "${cand}" ]]; then
         SERVER_JAR="$(basename "${cand}")"
         log "server: reusing cached Luminol jar (${SERVER_JAR})"

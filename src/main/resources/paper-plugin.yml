@@ -1,13 +1,11 @@
 name: ${name}
 version: ${version}
 main: fr.ekaii.litematica.LitematicaFolia
-description: ${description}
+description: "${description}"
 authors: ["exo"]
 api-version: "${apiVersion}"
 folia-supported: true
 load: STARTUP
-bootstrapper: fr.ekaii.litematica.LitematicaBootstrap
-loader: fr.ekaii.litematica.LitematicaLoader
 permissions:
   litematica.use:
     description: Base permission to use the plugin

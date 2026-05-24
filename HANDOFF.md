@@ -44,11 +44,20 @@ Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prom
   - `nms/NoopNmsBridge.java` — logging fallback
 - [x] `LitematicaFolia#onEnable()` logs `Folia detected: <bool>` via `FoliaCompat.isFolia()`
 - [x] `./gradlew compileJava` GREEN end-to-end (NMS bridge included, no source-set exclusions)
+- [x] **Build + smoke validator** (tick 2026-05-24 04:52)
+  - `./gradlew build` GREEN → `LitematicaFolia-0.1.0+26.1.2-all.jar` 76K
+  - `test-harness/run-tests.sh` PASS on Luminol 26.1.2 (`luminol-paperclip-26.1.2.local-SNAPSHOT.jar`)
+  - Server boot 4.335s; plugin `Enabling` + `Folia detected: true` + `ready`; 0 ERROR, 6 benign WARN
+  - RCON shake-out OK (op, time, weather, tps, list responded; `save-all` returns "Unknown command" on Folia — autosave handles it; non-fatal, not in fail patterns)
+  - Disabled cleanly on RCON `stop` (`save-all flush` would be ideal but harness already calls `stop` which triggers RegionShutdownThread)
+  - Fixes applied: `description: "${description}"` quoted in plugin.yml/paper-plugin.yml (Gradle expand was emitting an unquoted colon), additional fail patterns (`Error loading plugin`, `Initialized 0 plugins`), `|| true` guard on luminol*.jar cache lookup
 
 ### In flight / next
-- [ ] Initial commit + push to forgejo
-- [ ] Wire `/litematica paste` to PasteOperation (P1d)
-- [ ] First green CI build with full module set
+- [ ] **P1d commands** — `/litematica paste|save|materials|list|reload` wired to PasteOperation
+- [ ] **Build + smoke validator** — `./gradlew build` + `test-harness/run-tests.sh` against current jar
+- [ ] **P2 Servux protocol** — scaffold the `servux:litematics` channel handler (Netty pipeline injection like axiom)
+- [ ] **P3 FAWE adapter** — on hold (`mvn.intellectualsites.com` NXDOMAIN)
+- [ ] **P4 hardening + release** — pending P1d + smoke green
 
 ## Architecture
 

@@ -1,7 +1,7 @@
 name: ${name}
 version: ${version}
 main: fr.ekaii.litematica.LitematicaFolia
-description: ${description}
+description: "${description}"
 authors: ["exo"]
 api-version: "${apiVersion}"
 folia-supported: true
