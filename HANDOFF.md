@@ -8,7 +8,17 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~16:35 — **P11b servux-smoke green; Direct Paste verified headlessly**)
+## State (last tick: 2026-05-24 ~16:40 — **v0.2.0+26.1.2 released, deployed creaclone+plot, loop terminated**)
+
+### v0.2.0 release + deploy
+
+- Commit `3d3760a` bumps version 0.1.0 → 0.2.0; build green; 46 tests + servux-smoke PASS.
+- Tag `v0.2.0+26.1.2` pushed.
+- Forgejo release id `1768` (https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases/tag/v0.2.0+26.1.2) with jar asset `LitematicaFolia-0.2.0+26.1.2-all.jar` (129 KiB).
+- Deployed to `exo:/opt/mc-stack/{creaclone,plot}/plugins/`; old v0.1.0 jars removed to avoid duplicate-plugin warnings. **No restart triggered** — plugin loads on next planned restart. To expose Direct Paste live: `sed -i 's/enableServuxBridge: false/enableServuxBridge: true/' /opt/mc-stack/{creaclone,plot}/data/plugins/LitematicaFolia/config.yml` then `/litematica reload` (no restart needed since command is hot-reloadable).
+- **Autonomous loop terminated.** P11 scope COMPLETE. Open roadmap unchanged: save-v2 (#10), FAWE adapter (#8 NXDOMAIN), and a true visual smoke through the Fabric client (#11 nicety, autonomous P11b already validates the wire end-to-end).
+
+
 
 ### P11b — protocol bot + servux-smoke (2026-05-24 ~16:35)
 
