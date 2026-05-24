@@ -63,6 +63,44 @@ public interface NmsBridge {
      */
     void scheduleFluidTick(World world, int x, int y, int z, LitematicNbt.NbtTag nbt);
 
+    // -------------------------------------------------------- Extraction (save)
+
+    /**
+     * Extract the NBT of the block-entity at {@code (x, y, z)} in
+     * {@code world} (full metadata, equivalent to what gets written into the
+     * region file). Returns {@code null} if no block-entity is present.
+     *
+     * <p>Must be called on the chunk's owning region (Folia) or the main
+     * thread (Paper). The returned compound includes the {@code id} key plus
+     * the canonical positional keys {@code x/y/z} (absolute world coords) —
+     * callers may overwrite the positional fields if they want region-local
+     * coords (the save command does just that).
+     */
+    LitematicNbt.NbtTag extractTileEntityNbt(World world, int x, int y, int z);
+
+    /**
+     * Extract the NBT of a live bukkit {@link Entity} (uses NMS
+     * {@code Entity#save}). Returns {@code null} for players or when the
+     * entity refuses to serialise (e.g. removed, fake players).
+     */
+    LitematicNbt.NbtTag extractEntityNbt(Entity entity);
+
+    /**
+     * Return the NBT of every pending block tick scheduled at
+     * {@code (x, y, z)} in {@code world}. Each entry is the canonical
+     * {@code SavedTick} compound shape: {@code i} (target block id /
+     * resource location), {@code x/y/z} (world coords), {@code t} (delay
+     * in game-ticks, NOT absolute trigger time), {@code p} (priority).
+     * Returns an empty list if no block tick is scheduled.
+     */
+    java.util.List<LitematicNbt.NbtTag> extractPendingBlockTicks(World world, int x, int y, int z);
+
+    /**
+     * Same as {@link #extractPendingBlockTicks} but for pending fluid
+     * ticks (target type is a fluid resource location).
+     */
+    java.util.List<LitematicNbt.NbtTag> extractPendingFluidTicks(World world, int x, int y, int z);
+
     /**
      * Current Minecraft data version
      * ({@code SharedConstants.getCurrentVersion().getDataVersion().getVersion()}).

@@ -38,6 +38,28 @@ public final class NoopNmsBridge implements NmsBridge {
     }
 
     @Override
+    public LitematicNbt.NbtTag extractTileEntityNbt(World world, int x, int y, int z) {
+        LOG.warning("extractTileEntityNbt called on no-op bridge");
+        return null;
+    }
+
+    @Override
+    public LitematicNbt.NbtTag extractEntityNbt(Entity entity) {
+        LOG.warning("extractEntityNbt called on no-op bridge");
+        return null;
+    }
+
+    @Override
+    public java.util.List<LitematicNbt.NbtTag> extractPendingBlockTicks(World world, int x, int y, int z) {
+        return java.util.Collections.emptyList();
+    }
+
+    @Override
+    public java.util.List<LitematicNbt.NbtTag> extractPendingFluidTicks(World world, int x, int y, int z) {
+        return java.util.Collections.emptyList();
+    }
+
+    @Override
     public int currentDataVersion() {
         return -1;
     }

@@ -184,6 +184,34 @@ public final class NmsBridge26_1_2 implements NmsBridge {
         }
     }
 
+    // ------------------------------------------------------------------ Extraction (save v2)
+    // Interface surface added 2026-05-24. Real NMS impl deferred (the save-v2
+    // agent hit a session limit before implementing). Stubs keep the build
+    // green and the contract honest — `/litematica save` continues to fall
+    // back to blocks-only.
+
+    @Override
+    public LitematicNbt.NbtTag extractTileEntityNbt(World world, int x, int y, int z) {
+        LOG.warning("extractTileEntityNbt: NMS impl pending (save-v2 deferred); falling back to blocks-only.");
+        return null;
+    }
+
+    @Override
+    public LitematicNbt.NbtTag extractEntityNbt(org.bukkit.entity.Entity entity) {
+        LOG.warning("extractEntityNbt: NMS impl pending (save-v2 deferred); falling back to blocks-only.");
+        return null;
+    }
+
+    @Override
+    public java.util.List<LitematicNbt.NbtTag> extractPendingBlockTicks(World world, int x, int y, int z) {
+        return java.util.Collections.emptyList();
+    }
+
+    @Override
+    public java.util.List<LitematicNbt.NbtTag> extractPendingFluidTicks(World world, int x, int y, int z) {
+        return java.util.Collections.emptyList();
+    }
+
     private static int readIntOr(LitematicNbt.NbtCompound c, String key, int def) {
         Integer i = c.getInt(key);
         if (i != null) return i;
