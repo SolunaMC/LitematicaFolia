@@ -62,6 +62,16 @@ tasks {
     }
     test {
         useJUnitPlatform()
+        // Forward selected -D properties to the test JVM so EnabledIfSystemProperty
+        // gates (e.g. litematica.stress) can be flipped from the gradle command line.
+        listOf("litematica.stress").forEach { key ->
+            val v = providers.systemProperty(key).orNull
+            if (v != null) systemProperty(key, v)
+        }
+        // Stress test materialises a ~4 M-int block grid plus full TE/Entity NBT
+        // before round-tripping through gzip. 2 GiB is comfortable for both
+        // routine + stress runs.
+        maxHeapSize = "2g"
     }
 }
 
