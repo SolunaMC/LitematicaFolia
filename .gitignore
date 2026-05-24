@@ -16,6 +16,11 @@ test-harness/server/plugins/.paper-remapped/
 test-harness/run.log
 test-harness/result.txt
 test-harness/paste-result.txt
+test-harness/paste-smoke.out
+test-harness/paste-smoke.trace
+test-harness/stress-result.txt
+test-harness/stress-gen.log
+test-harness/stress-runtests.log
 test-harness/gradle.log
 test-harness/server.pid
 test-harness/server/eula.txt

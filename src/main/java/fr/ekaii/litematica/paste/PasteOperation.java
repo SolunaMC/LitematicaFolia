@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -75,11 +76,49 @@ public final class PasteOperation {
     private final PasteOptions options;
     private final NmsBridge nms;
 
+    /**
+     * Cooperative cancellation flag. Per-chunk tasks check this between writes
+     * (and at chunk-task entry). When flipped to {@code true}, no further writes
+     * are issued and the operation completes early with whatever has been
+     * placed so far. An entry is added to {@link PasteResult#errors()}.
+     *
+     * <p>Memory model: writes from {@link #cancel()} are visible to every chunk
+     * worker thanks to the {@link AtomicBoolean} happens-before.
+     *
+     * <p>TODO: paste hot path currently materialises full palette + block grid
+     * in memory; a {@code --stream} flag for very large schematics is future
+     * work (would read+place region-by-region instead of pre-planning).
+     */
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
     public PasteOperation(Plugin plugin, LitematicSchematic schematic, PasteOptions options) {
         this.plugin = plugin;
         this.schematic = schematic;
         this.options = options;
         this.nms = NmsBridge.get();
+    }
+
+    /**
+     * Cooperative cancellation. Flips the {@link #cancelled} flag; in-flight
+     * chunk tasks will short-circuit on their next per-block iteration. This
+     * does NOT abort already-scheduled region tasks — Folia's RegionScheduler
+     * has no API for that — but each task exits very quickly once the flag is
+     * set.
+     *
+     * <p>Returns true if this call actually flipped the flag (caller was first
+     * to cancel).
+     */
+    public boolean cancel() {
+        boolean firstToCancel = cancelled.compareAndSet(false, true);
+        if (firstToCancel) {
+            reportProgress("paste cancellation requested");
+        }
+        return firstToCancel;
+    }
+
+    /** True once {@link #cancel()} has been invoked. */
+    public boolean isCancelled() {
+        return cancelled.get();
     }
 
     /**
@@ -225,7 +264,14 @@ public final class PasteOperation {
 
         return finalPhase.thenApply(ignored -> {
             long ms = (System.nanoTime() - startNs) / 1_000_000L;
-            reportProgress("paste complete: " + blocksPlaced.get() + " blocks in " + ms + "ms");
+            String summary = "paste complete: " + blocksPlaced.get() + " blocks, "
+                    + tilesPlaced.get() + " TE, "
+                    + entitiesSpawned.get() + " entities, "
+                    + errors.size() + " err in " + ms + "ms";
+            // Always log to plugin logger so latest.log captures completion
+            // (RCON-only senders won't see Component.text replies in the log).
+            LOG.info(summary);
+            reportProgress(summary);
             return new PasteResult(
                     blocksPlaced.get(),
                     tilesPlaced.get(),
@@ -383,7 +429,13 @@ public final class PasteOperation {
 
     private void applyChunkBlocks(World world, List<PendingWrite> writes, AtomicLong counter,
                                   ConcurrentLinkedQueue<String> errors) {
+        if (cancelled.get()) return;
         for (PendingWrite pw : writes) {
+            // Cancellation checkpoint — cheap volatile read between writes.
+            if (cancelled.get()) {
+                errors.add("cancelled mid-chunk at (" + pw.x + "," + pw.y + "," + pw.z + ")");
+                return;
+            }
             try {
                 Block b = world.getBlockAt(pw.x, pw.y, pw.z);
                 // Bukkit overload: setBlockData(data, applyPhysics) — applyPhysics=false to defer.
@@ -393,7 +445,11 @@ public final class PasteOperation {
                 if (FoliaThreadException.isFoliaThreadException(t)) {
                     errors.add("setBlock (" + pw.x + "," + pw.y + "," + pw.z + "): wrong region thread");
                 } else {
-                    errors.add("setBlock (" + pw.x + "," + pw.y + "," + pw.z + "): " + t.getClass().getSimpleName() + " " + t.getMessage());
+                    errors.add("setBlock (" + pw.x + "," + pw.y + "," + pw.z + "): "
+                            + t.getClass().getSimpleName() + " " + t.getMessage());
+                    // Log full stack so non-Folia bugs are not swallowed silently.
+                    LOG.log(Level.WARNING, "setBlock failure at "
+                            + pw.x + "," + pw.y + "," + pw.z, t);
                 }
             }
         }

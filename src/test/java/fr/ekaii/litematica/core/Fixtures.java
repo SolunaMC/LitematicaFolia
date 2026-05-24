@@ -171,6 +171,100 @@ public final class Fixtures {
         return s;
     }
 
+    // -------------------------------------------------------------- Fixture C
+
+    /**
+     * 256×64×256 stress fixture = 4 194 304 cells. Approximate composition:
+     * <ul>
+     *   <li>~80% terrain: random stone/dirt/grass/cobblestone</li>
+     *   <li>~15% chest blocks (each with a populated tile entity)</li>
+     *   <li>~5% redstone components (observer, piston, repeater, comparator, redstone_wire)
+     *       — to exercise the {@code observersLast} pass in {@link
+     *       fr.ekaii.litematica.paste.PasteOperation}</li>
+     * </ul>
+     *
+     * Deterministic via a fixed RNG seed so the fixture is reproducible.
+     */
+    public static LitematicSchematic largeFixture256() {
+        final int DX = 256, DY = 64, DZ = 256;
+        LitematicSchematic s = skeleton("large-256", DX, DY, DZ, 1);
+
+        LitematicRegion r = new LitematicRegion();
+        r.name = "main";
+        r.originX = 0; r.originY = 64; r.originZ = 0;
+        r.sizeX = DX; r.sizeY = DY; r.sizeZ = DZ;
+
+        // Palette layout (indices used in blocks[]):
+        //  0 air
+        //  1 stone               terrain
+        //  2 dirt                terrain
+        //  3 grass_block         terrain (snowy=false)
+        //  4 cobblestone         terrain
+        //  5 chest[facing=north,type=single,waterlogged=false]
+        //  6 observer[facing=up,powered=false]            redstone
+        //  7 piston[facing=up,extended=false]             redstone
+        //  8 repeater[facing=north,delay=1,locked=false,powered=false]
+        //  9 comparator[facing=north,mode=compare,powered=false]
+        // 10 redstone_wire[north=none,east=none,south=none,west=none,power=0]
+        r.palette.add(new BlockStateEntry("minecraft:air"));
+        r.palette.add(new BlockStateEntry("minecraft:stone"));
+        r.palette.add(new BlockStateEntry("minecraft:dirt"));
+        r.palette.add(new BlockStateEntry("minecraft:grass_block", linked("snowy", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:cobblestone"));
+        r.palette.add(new BlockStateEntry("minecraft:chest",
+                linked("facing", "north", "type", "single", "waterlogged", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:observer",
+                linked("facing", "up", "powered", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:piston",
+                linked("facing", "up", "extended", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:repeater",
+                linked("delay", "1", "facing", "north", "locked", "false", "powered", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:comparator",
+                linked("facing", "north", "mode", "compare", "powered", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:redstone_wire",
+                linked("east", "none", "north", "none", "power", "0", "south", "none", "west", "none")));
+
+        int cells = DX * DY * DZ;
+        r.blocks = new int[cells];
+
+        // Deterministic RNG.
+        java.util.Random rng = new java.util.Random(0x11717AC711CAL);
+        // Terrain (4 codes): 1..4 ; redstone (5 codes): 6..10 ; chest = 5.
+        int[] terrain = {1, 2, 3, 4};
+        int[] redstone = {6, 7, 8, 9, 10};
+
+        // Build the block grid + tile-entity list together so chest positions
+        // and TE NBT stay coherent.
+        LitematicNbt.NbtList tes = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+
+        for (int y = 0; y < DY; y++) {
+            for (int z = 0; z < DZ; z++) {
+                for (int x = 0; x < DX; x++) {
+                    int idx = r.indexOf(x, y, z);
+                    int roll = rng.nextInt(100);
+                    if (roll < 80) {
+                        r.blocks[idx] = terrain[rng.nextInt(4)];
+                    } else if (roll < 95) {
+                        // chest
+                        r.blocks[idx] = 5;
+                        tes.values().add(chestTileEntity(x, y, z));
+                    } else {
+                        r.blocks[idx] = redstone[rng.nextInt(5)];
+                    }
+                }
+            }
+        }
+
+        r.tileEntities      = tes;
+        r.entities          = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.pendingBlockTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.pendingFluidTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+
+        s.regions.put(r.name, r);
+        s.metadata.totalBlocks = r.countNonAir();
+        return s;
+    }
+
     // ------------------------------------------------------- Disk-write helper
 
     /** Writes both canonical fixtures to {@code dir}. */
@@ -180,6 +274,13 @@ public final class Fixtures {
                 LitematicWriter.writeToBytes(stoneCube4()));
         Files.write(dir.resolve("mixed-room-8.litematic"),
                 LitematicWriter.writeToBytes(mixedRoom8()));
+    }
+
+    /** Writes the large stress fixture to {@code dir}. Heavy — call only from stress tests. */
+    public static void writeLarge(Path dir) throws IOException {
+        Files.createDirectories(dir);
+        Files.write(dir.resolve("large-256.litematic"),
+                LitematicWriter.writeToBytes(largeFixture256()));
     }
 
     /** Returns the gzipped-NBT bytes for the given schematic. */

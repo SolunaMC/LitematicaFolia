@@ -157,12 +157,17 @@ else
     if [[ -n "${JAVA_MAJOR}" && "${JAVA_MAJOR}" -ge 21 ]]; then
         EXTRA_JVM_ARGS+=('--add-modules=jdk.incubator.vector')
     fi
-    SERVER_JAR="$(ls -1 "${SERVER_DIR}"/luminol*.jar "${SERVER_DIR}"/paper*.jar 2>/dev/null | head -n1)"
+    SERVER_JAR="$(ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null; ls -1 "${SERVER_DIR}"/paper*.jar 2>/dev/null; true)"
+    SERVER_JAR="$(printf '%s\n' "${SERVER_JAR}" | head -n1)"
     if [[ -z "${SERVER_JAR}" ]]; then
         diag="No server jar in ${SERVER_DIR}"
         write_result "FAIL" "${diag}"
         exit 1
     fi
+    # Snapshot run.log length BEFORE re-boot so the 'Done (' grep below only
+    # sees lines emitted by the new server process.
+    REBOOT_LOG_OFFSET=$(wc -l <"${RUN_LOG}" 2>/dev/null || echo 0)
+    REBOOT_LOG_OFFSET=$((REBOOT_LOG_OFFSET + 0))
     (
         cd "${SERVER_DIR}" || exit 99
         export JAVA_HOME="${JAVA_HOME_DIR}"
@@ -171,14 +176,18 @@ else
     SERVER_PID=$!
     echo "${SERVER_PID}" > "${PID_FILE}"
 
+    boot_done_after_offset() {
+        tail -n +"$((REBOOT_LOG_OFFSET + 1))" "${RUN_LOG}" 2>/dev/null | grep -E 'Done \(' >/dev/null 2>&1
+    }
+
     deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECS ))
     while :; do
         (( $(date +%s) > deadline )) && break
-        if grep -E 'Done \(' "${RUN_LOG}" >/dev/null 2>&1; then break; fi
+        if boot_done_after_offset; then break; fi
         kill -0 "${SERVER_PID}" 2>/dev/null || break
         sleep 1
     done
-    if ! grep -E 'Done \(' "${RUN_LOG}" >/dev/null 2>&1; then
+    if ! boot_done_after_offset; then
         diag="server re-boot did not reach Done within ${BOOT_TIMEOUT_SECS}s"
         write_result "FAIL" "${diag}"
         exit 1
@@ -240,19 +249,36 @@ for fx in "${FIXTURES[@]}"; do
 done
 
 ###############################################################################
-# 5. Force a save, verify world dir mtime changed.
+# 5. Force a save, verify either world files updated OR a "paste complete"
+#    line is present in latest.log.
 ###############################################################################
 log "rcon save-all"
 send_rcon "save-all" >/dev/null 2>&1 || true
 sleep "${SAVE_SETTLE_SECS}"
 
+# Look for the plugin's authoritative completion line in latest.log first —
+# this is more reliable than dir mtime (which only ticks when entries are
+# added/removed, not when files inside are rewritten in place).
+paste_complete_count="$(grep -cE 'paste complete:' "${LOG_FILE}" 2>/dev/null || echo 0)"
+paste_complete_count=$((paste_complete_count + 0))
+
 world_mtime_after="$(dir_mtime "${WORLD_DIR}")"
-if [[ "${world_mtime_after}" == "${world_mtime_before}" ]]; then
-    diag="$(printf 'World dir mtime unchanged (%s -> %s) — no writes happened.\n\nPaste diag:\n%s\n' \
-        "${world_mtime_before}" "${world_mtime_after}" "${paste_diag}")"
+# Walk children too — region files / level.dat overwrites change FILE mtimes
+# but not parent dir mtime on macOS.
+deepest_mtime=0
+while IFS= read -r f; do
+    fm=$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0)
+    [[ "${fm}" -gt "${deepest_mtime}" ]] && deepest_mtime=$fm
+done < <(find "${WORLD_DIR}" -type f 2>/dev/null)
+
+if (( paste_complete_count == 0 )) && (( deepest_mtime <= world_mtime_before )) \
+        && [[ "${world_mtime_after}" == "${world_mtime_before}" ]]; then
+    diag="$(printf 'No paste-complete log entry AND no file mtime advance after paste.\nworld_mtime_before=%s\nworld_mtime_after=%s\ndeepest_file_mtime=%s\n\nPaste diag:\n%s\n' \
+        "${world_mtime_before}" "${world_mtime_after}" "${deepest_mtime}" "${paste_diag}")"
     write_result "FAIL" "${diag}"
     exit 1
 fi
+log "paste-complete lines: ${paste_complete_count}; deepest file mtime: ${deepest_mtime} (was ${world_mtime_before})"
 
 if fail_hit="$(scan_all_logs)"; then
     diag="$(printf 'Fail pattern in final scan:\n%s\n\nPaste diag:\n%s\n' "${fail_hit}" "${paste_diag}")"

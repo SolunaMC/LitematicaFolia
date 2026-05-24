@@ -1,8 +1,12 @@
 # LitematicaFolia
 
+[![MC](https://img.shields.io/badge/Minecraft-26.1.2-blue)](https://papermc.io/) [![Folia](https://img.shields.io/badge/Folia-supported-green)](https://papermc.io/software/folia) [![JDK](https://img.shields.io/badge/JDK-25-orange)](https://openjdk.org/) [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE) [![Release](https://img.shields.io/badge/release-v0.1.0%2B26.1.2-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases)
+
 Server-side Paper/Folia plugin that reads `.litematic` schematics (the format produced by [Litematica](https://github.com/maruohon/litematica)) and pastes them into a live Minecraft world.
 
-**Status: in-development autonomous build** (see `HANDOFF.md`).
+**Status: 0.1.0 released — first version covering parser, paste, NMS, commands, Servux bridge (opt-in).** See `HANDOFF.md` for build history and `CHANGELOG.md` for release notes.
+
+> Screenshots: _add screenshot here_ (paste in progress, materials list, info pane).
 
 ## Why
 

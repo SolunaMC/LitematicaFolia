@@ -66,6 +66,17 @@ public final class LitematicaCommands {
 
     private final LitematicaFolia plugin;
 
+    /**
+     * Active paste operations, keyed by an opaque ticket string ({@code sender}
+     * name + monotonically incrementing counter). {@code /litematica cancel}
+     * flips the most recent (or all) of these. Concurrent map because paste
+     * tasks complete from arbitrary region threads.
+     */
+    private final java.util.concurrent.ConcurrentMap<String, PasteOperation> activeOps =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong opSeq =
+            new java.util.concurrent.atomic.AtomicLong(0);
+
     public LitematicaCommands(LitematicaFolia plugin) {
         this.plugin = plugin;
     }
@@ -97,6 +108,7 @@ public final class LitematicaCommands {
                 .then(buildMaterialsBranch())
                 .then(buildListBranch())
                 .then(buildInfoBranch())
+                .then(buildCancelBranch())
                 .then(buildReloadBranch());
     }
 
@@ -145,25 +157,32 @@ public final class LitematicaCommands {
      * Attach the four "--no-…" flag literal children to {@code parent}. Each
      * flag terminal both executes the paste and recursively chains the remaining
      * flags so combinations like {@code --no-entities --no-physics} parse.
+     *
+     * Recursion is bounded by tracking a bitmask of already-used flag bits.
      */
     private void attachFlagChildren(com.mojang.brigadier.builder.ArgumentBuilder<CommandSourceStack, ?> parent) {
-        parent.then(buildFlagNode("--no-entities", 1));
-        parent.then(buildFlagNode("--no-physics", 2));
-        parent.then(buildFlagNode("--no-tile-entities", 4));
-        parent.then(buildFlagNode("--no-pending-ticks", 8));
+        attachFlagChildren(parent, 0);
+    }
+
+    private static final int FLAG_NO_ENTITIES      = 1;
+    private static final int FLAG_NO_PHYSICS       = 2;
+    private static final int FLAG_NO_TILE_ENTITIES = 4;
+    private static final int FLAG_NO_PENDING_TICKS = 8;
+
+    private void attachFlagChildren(com.mojang.brigadier.builder.ArgumentBuilder<CommandSourceStack, ?> parent, int usedMask) {
+        if ((usedMask & FLAG_NO_ENTITIES) == 0)      parent.then(buildFlagNode("--no-entities",      FLAG_NO_ENTITIES,      usedMask));
+        if ((usedMask & FLAG_NO_PHYSICS) == 0)       parent.then(buildFlagNode("--no-physics",       FLAG_NO_PHYSICS,       usedMask));
+        if ((usedMask & FLAG_NO_TILE_ENTITIES) == 0) parent.then(buildFlagNode("--no-tile-entities", FLAG_NO_TILE_ENTITIES, usedMask));
+        if ((usedMask & FLAG_NO_PENDING_TICKS) == 0) parent.then(buildFlagNode("--no-pending-ticks", FLAG_NO_PENDING_TICKS, usedMask));
     }
 
     /**
-     * Build one flag literal. {@code remainingMask} is a bitmask of flag-id bits
-     * still available to chain (so we never offer the same flag twice in a row).
+     * Build one flag literal. {@code selfBit} is the bit for this flag (added to
+     * usedMask before recursing). Recursion terminates when all 4 bits are used.
      */
-    private LiteralArgumentBuilder<CommandSourceStack> buildFlagNode(String name, int selfBit) {
+    private LiteralArgumentBuilder<CommandSourceStack> buildFlagNode(String name, int selfBit, int usedMask) {
         LiteralArgumentBuilder<CommandSourceStack> node = Commands.literal(name).executes(this::doPasteImpl);
-        // Chain the OTHER three flags below this one (no self-recursion).
-        if (selfBit != 1) node.then(buildFlagNode("--no-entities", 1));
-        if (selfBit != 2) node.then(buildFlagNode("--no-physics", 2));
-        if (selfBit != 4) node.then(buildFlagNode("--no-tile-entities", 4));
-        if (selfBit != 8) node.then(buildFlagNode("--no-pending-ticks", 8));
+        attachFlagChildren(node, usedMask | selfBit);
         return node;
     }
 
@@ -276,20 +295,29 @@ public final class LitematicaCommands {
         }
 
         PasteOperation op = new PasteOperation(plugin, schem, opts);
+        String ticket = sender.getName() + "#" + opSeq.incrementAndGet();
+        activeOps.put(ticket, op);
+        sender.sendMessage(Component.text(
+                "ticket " + ticket + " — /litematica cancel " + ticket + " to abort",
+                NamedTextColor.AQUA));
+
         CompletableFuture<fr.ekaii.litematica.paste.PasteResult> future = op.execute();
 
         future.whenComplete((result, throwable) -> {
+            activeOps.remove(ticket);
             if (throwable != null) {
                 sender.sendMessage(Component.text("paste failed: " + throwable.getMessage(), NamedTextColor.RED));
                 plugin.getLogger().log(Level.WARNING, "paste failed", throwable);
                 return;
             }
+            String tag = op.isCancelled() ? "paste CANCELLED: " : "paste complete: ";
+            NamedTextColor color = op.isCancelled() ? NamedTextColor.YELLOW : NamedTextColor.GREEN;
             sender.sendMessage(Component.text(
-                    "paste complete: " + result.blocksPlaced() + " blocks, "
+                    tag + result.blocksPlaced() + " blocks, "
                             + result.entitiesSpawned() + " entities, "
                             + result.tileEntitiesPlaced() + " tile entities, "
                             + result.durationMs() + " ms",
-                    NamedTextColor.GREEN));
+                    color));
             if (!result.errors().isEmpty()) {
                 int shown = Math.min(5, result.errors().size());
                 sender.sendMessage(Component.text(
@@ -301,6 +329,52 @@ public final class LitematicaCommands {
             }
         });
         return 1;
+    }
+
+    // ---------------------------------------------------------------- cancel
+
+    private LiteralArgumentBuilder<CommandSourceStack> buildCancelBranch() {
+        // `/litematica cancel` cancels all active ops; `/litematica cancel <ticket>`
+        // cancels one. Both gated by litematica.paste (you must be able to paste
+        // to cancel — admins use litematica.admin can override via OP).
+        return Commands.literal("cancel")
+                .requires(src -> src.getSender().hasPermission("litematica.paste"))
+                .executes(ctx -> doCancel(ctx, null))
+                .then(Commands.argument("ticket", StringArgumentType.string())
+                        .suggests((c, b) -> {
+                            for (String t : activeOps.keySet()) b.suggest(t);
+                            return b.buildFuture();
+                        })
+                        .executes(ctx -> doCancel(ctx, StringArgumentType.getString(ctx, "ticket"))));
+    }
+
+    private int doCancel(CommandContext<CommandSourceStack> ctx, String ticket) {
+        CommandSender sender = ctx.getSource().getSender();
+        if (activeOps.isEmpty()) {
+            sender.sendMessage(Component.text("no active paste operations", NamedTextColor.YELLOW));
+            return 0;
+        }
+        if (ticket == null) {
+            int count = 0;
+            for (PasteOperation op : activeOps.values()) {
+                if (op.cancel()) count++;
+            }
+            sender.sendMessage(Component.text(
+                    "cancelled " + count + " paste operation(s)", NamedTextColor.GREEN));
+            return count;
+        }
+        PasteOperation op = activeOps.get(ticket);
+        if (op == null) {
+            sender.sendMessage(Component.text("no such ticket: " + ticket, NamedTextColor.RED));
+            return 0;
+        }
+        if (op.cancel()) {
+            sender.sendMessage(Component.text("cancelled " + ticket, NamedTextColor.GREEN));
+            return 1;
+        } else {
+            sender.sendMessage(Component.text(ticket + " already cancelled", NamedTextColor.YELLOW));
+            return 0;
+        }
     }
 
     // ------------------------------------------------------------------ save
@@ -755,8 +829,11 @@ public final class LitematicaCommands {
     private static World senderWorld(CommandSender sender) {
         if (sender instanceof Player p) return p.getWorld();
         if (sender instanceof org.bukkit.command.BlockCommandSender bcs) return bcs.getBlock().getWorld();
-        if (sender instanceof ConsoleCommandSender) {
-            // Best-effort: pick the first world
+        // Both ConsoleCommandSender and RemoteConsoleCommandSender (RCON) lack a
+        // world binding — fall back to the primary world. Intentionally permissive
+        // so the smoke harness (and ops) can paste from the console / RCON.
+        if (sender instanceof ConsoleCommandSender
+                || sender instanceof org.bukkit.command.RemoteConsoleCommandSender) {
             List<World> worlds = org.bukkit.Bukkit.getWorlds();
             return worlds.isEmpty() ? null : worlds.get(0);
         }
