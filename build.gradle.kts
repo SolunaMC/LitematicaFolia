@@ -20,19 +20,20 @@ repositories {
             includeGroup("com.sk89q.worldedit.worldedit-libs")
         }
     }
-    maven("https://mvn.intellectualsites.com/content/repositories/releases/") {
-        content {
-            includeGroup("com.fastasyncworldedit")
-        }
-    }
+    // FAWE maven repo (mvn.intellectualsites.com) currently NXDOMAIN — Phase 3
+    // FAWE adapter is on hold; re-enable when the upstream repo is reachable.
+    // maven("https://mvn.intellectualsites.com/content/repositories/releases/") {
+    //     content { includeGroup("com.fastasyncworldedit") }
+    // }
     mavenCentral()
 }
 
 dependencies {
     paperweight.paperDevBundle("26.1.2.build.53-stable")
     compileOnly(libs.luckperms)
-    compileOnly(libs.fawe.bukkit)
-    compileOnly(libs.fawe.core)
+    // FAWE compileOnly deps disabled — see repository block above.
+    // compileOnly(libs.fawe.bukkit)
+    // compileOnly(libs.fawe.core)
 }
 
 tasks {
