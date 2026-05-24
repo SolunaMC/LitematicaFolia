@@ -15,6 +15,7 @@ public final class LitematicaFolia extends JavaPlugin {
         instance = this;
         saveDefaultConfig();
         getLogger().info("LitematicaFolia enabling — schematics dir: " + getSchematicsDir());
+        getLogger().info("Folia detected: " + fr.ekaii.litematica.paste.FoliaCompat.isFolia());
         getSchematicsDir().mkdirs();
         new fr.ekaii.litematica.command.LitematicaCommands(this).register();
         getLogger().info("LitematicaFolia ready.");
