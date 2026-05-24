@@ -131,6 +131,13 @@ public final class DirectPasteHandler {
     private void handleTransmitFrame(Player player, int transactionId,
                                      LitematicNbt.NbtCompound payload) {
         String task = orEmpty(payload.getString("Task"));
+        // The inline "LitematicaPaste" path (maruohon Litematica
+        // SchematicPlacementManager) carries the entire placement +
+        // schematic data in ONE compound. No SliceKey, no state machine.
+        if (task.equals("LitematicaPaste")) {
+            handleInlineLitematicaPaste(player, payload);
+            return;
+        }
         Long sliceKey = payload.getLong("SliceKey");
         if (task.isEmpty() || sliceKey == null) {
             LOG.warning("Transmit frame missing Task / SliceKey from " + player.getName()
@@ -208,6 +215,132 @@ public final class DirectPasteHandler {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * Handle the maruohon Litematica 0.27.x inline Direct Paste path:
+     * {@code Task=LitematicaPaste} carrying a single compound
+     * {@code {Origin: int[3], SubRegions: Compound{regionName: regionNbt}, IgnoreEntities: byte, …}}.
+     *
+     * <p>SubRegions[name] follows the same schema as a {@code .litematic}
+     * file's {@code Regions[name]} compound — palette + bit-packed
+     * blockstates + tile entities + entities + pending ticks. We hand the
+     * compound directly to {@link LitematicReader#fromCompound} after
+     * wrapping it in a synthetic outer root with the required Metadata
+     * fields.
+     */
+    private void handleInlineLitematicaPaste(Player player, LitematicNbt.NbtCompound payload) {
+        LOG.info("[direct-paste] inline LitematicaPaste from " + player.getName()
+                + " (root keys=" + payload.entries().keySet() + ")");
+        // The actual schematic compound (Version/MinecraftDataVersion/Metadata/Regions)
+        // lives under the "Schematics" key — Litematica embeds its full
+        // LitematicaSchematic.toNbt() there. "SubRegions" is just per-region
+        // placement overrides (position/rotation/enabled), not block data.
+        LitematicNbt.NbtCompound schematicsCompound = payload.getCompound("Schematics");
+        if (schematicsCompound == null) {
+            LOG.warning("[direct-paste] LitematicaPaste missing Schematics from " + player.getName());
+            return;
+        }
+        Location origin = resolveInlineOrigin(payload, player);
+        if (origin == null) {
+            LOG.warning("[direct-paste] LitematicaPaste no usable origin from " + player.getName());
+            return;
+        }
+        Byte ignoreEntities = payload.getByte("IgnoreEntities");
+        boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
+
+        // Map Litematica's Rotation enum string → yaw integer.
+        // NONE=0, CLOCKWISE_90=90, CLOCKWISE_180=180, COUNTERCLOCKWISE_90=270.
+        int yaw = 0;
+        String rot = payload.getString("Rotation");
+        if (rot != null) {
+            switch (rot) {
+                case "CLOCKWISE_90"       -> yaw = 90;
+                case "CLOCKWISE_180"      -> yaw = 180;
+                case "COUNTERCLOCKWISE_90"-> yaw = 270;
+                default                   -> yaw = 0;
+            }
+        }
+
+        LitematicSchematic schem;
+        try {
+            schem = LitematicReader.fromCompound(schematicsCompound);
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "[direct-paste] LitematicaPaste fromCompound failed for "
+                    + player.getName() + " — Schematics keys="
+                    + schematicsCompound.entries().keySet(), t);
+            player.sendMessage("[LitematicaFolia] direct paste decode failed: "
+                    + t.getClass().getSimpleName() + " — " + t.getMessage());
+            return;
+        }
+
+        PasteOptions defaults = PasteOptions.defaults(origin);
+        PasteOptions opts = new PasteOptions(
+                origin,
+                placeEntities,
+                defaults.placeTileEntities(),
+                defaults.placePendingTicks(),
+                defaults.deferredPhysics(),
+                defaults.observersLast(),
+                defaults.maxBlocksPerChunkTask(),
+                yaw,
+                null);
+
+        player.sendMessage("[LitematicaFolia] Direct Paste via Servux — placing "
+                + schem.regions.size() + " region(s) at "
+                + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ() + "…");
+        new PasteOperation(plugin, schem, opts).execute()
+                .whenComplete((res, err) -> reportComplete(player, res, err));
+    }
+
+    private Location resolveInlineOrigin(LitematicNbt.NbtCompound payload, Player player) {
+        // Preferred: Origin as IntArray[3].
+        int[] arr = payload.getIntArray("Origin");
+        if (arr != null && arr.length >= 3) {
+            return new Location(player.getWorld(), arr[0], arr[1], arr[2]);
+        }
+        // Or a compound {x,y,z}.
+        LitematicNbt.NbtCompound c = payload.getCompound("Origin");
+        if (c != null) {
+            Integer ox = c.getInt("x");
+            Integer oy = c.getInt("y");
+            Integer oz = c.getInt("z");
+            if (ox != null && oy != null && oz != null) {
+                return new Location(player.getWorld(), ox, oy, oz);
+            }
+        }
+        // Or scalars at the root.
+        Integer ox = payload.getInt("OriginX");
+        Integer oy = payload.getInt("OriginY");
+        Integer oz = payload.getInt("OriginZ");
+        if (ox != null && oy != null && oz != null) {
+            return new Location(player.getWorld(), ox, oy, oz);
+        }
+        return null;
+    }
+
+    private static String firstRegionName(LitematicNbt.NbtCompound subRegions) {
+        for (String k : subRegions.entries().keySet()) {
+            return k;
+        }
+        return "DirectPaste";
+    }
+
+    private static LitematicNbt.NbtCompound pickEnclosingSize(
+            LitematicNbt.NbtCompound payload, LitematicNbt.NbtCompound subRegions) {
+        LitematicNbt.NbtCompound supplied = payload.getCompound("EnclosingSize");
+        if (supplied != null) return supplied;
+        // Take the first region's Size (a sane default for one-region paste).
+        for (LitematicNbt.NbtTag t : subRegions.entries().values()) {
+            if (t instanceof LitematicNbt.NbtCompound rc) {
+                LitematicNbt.NbtCompound size = rc.getCompound("Size");
+                if (size != null) return size;
+            }
+        }
+        // Last resort: zero-size — parser will compute from packed array.
+        LitematicNbt.NbtCompound zero = new LitematicNbt.NbtCompound();
+        zero.putInt("x", 0); zero.putInt("y", 0); zero.putInt("z", 0);
+        return zero;
     }
 
     /** Called from the bridge when a player disconnects. */

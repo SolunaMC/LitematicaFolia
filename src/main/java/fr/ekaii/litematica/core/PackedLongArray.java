@@ -1,19 +1,30 @@
 package fr.ekaii.litematica.core;
 
 /**
- * Word-aligned packed-long-array codec, matching the Minecraft 1.16+ palette
- * encoding used by Litematica schematics. Each entry occupies
- * {@code bitsPerEntry} bits within a long, and no entry crosses a long
- * boundary — any unused trailing bits inside a long are zero-padded.
+ * Compact (cross-word) packed-long-array codec used by the {@code .litematic}
+ * format. Each entry occupies {@code bitsPerEntry} bits laid out
+ * sequentially across the long array; an entry MAY span the boundary
+ * between two adjacent longs.
+ *
+ * <p>This differs from the post-1.16 Minecraft chunk-section palette
+ * format, which is word-aligned (one entry never crosses a long
+ * boundary). Litematica's {@code BlockStates} long array follows the old
+ * compact layout regardless of MC version — see
+ * {@code LitematicaBlockStateContainerBase} in upstream.
  *
  * <pre>
- *   bitsPerEntry   = max(ceil(log2(paletteSize)), 2)
- *   entriesPerLong = floor(64 / bitsPerEntry)
- *   longCount      = ceil(totalEntries / entriesPerLong)
+ *   bitsPerEntry = max(ceil(log2(paletteSize)), 2)
+ *   longCount    = ceil(totalEntries * bitsPerEntry / 64)
  *
- *   long  = data[i / entriesPerLong]
- *   shift = (i % entriesPerLong) * bitsPerEntry
- *   value = (long >>> shift) &amp; ((1 &lt;&lt; bitsPerEntry) - 1)
+ *   bitPos   = i * bitsPerEntry
+ *   longIdx  = bitPos / 64
+ *   bitInLong= bitPos % 64
+ *   if bitInLong + bitsPerEntry <= 64:
+ *       value = (data[longIdx] >>> bitInLong) & mask
+ *   else:
+ *       low   = data[longIdx]   >>> bitInLong
+ *       high  = data[longIdx+1] &lt;&lt; (64 - bitInLong)
+ *       value = (low | high) & mask
  * </pre>
  */
 public final class PackedLongArray {
@@ -33,15 +44,15 @@ public final class PackedLongArray {
 
     /**
      * Number of longs required to pack {@code totalEntries} entries at
-     * {@code bitsPerEntry} bits each, with word-aligned packing.
+     * {@code bitsPerEntry} bits each, using the compact cross-word layout.
      */
     public static int requiredLongs(int totalEntries, int bitsPerEntry) {
         if (totalEntries == 0) return 0;
-        int entriesPerLong = 64 / bitsPerEntry;
-        return (totalEntries + entriesPerLong - 1) / entriesPerLong;
+        long totalBits = (long) totalEntries * (long) bitsPerEntry;
+        return (int) ((totalBits + 63L) / 64L);
     }
 
-    /** Decodes a packed long array back to per-cell palette indices. */
+    /** Decodes a compact packed long array back to per-cell palette indices. */
     public static int[] decode(long[] data, int bitsPerEntry, int totalEntries) {
         if (bitsPerEntry < 1 || bitsPerEntry > 32) {
             throw new IllegalArgumentException("bitsPerEntry out of range: " + bitsPerEntry);
@@ -52,7 +63,6 @@ public final class PackedLongArray {
         int[] out = new int[totalEntries];
         if (totalEntries == 0) return out;
 
-        int entriesPerLong = 64 / bitsPerEntry;
         long mask = (1L << bitsPerEntry) - 1L;
         int expectedLongs = requiredLongs(totalEntries, bitsPerEntry);
         if (data.length < expectedLongs) {
@@ -60,14 +70,24 @@ public final class PackedLongArray {
                     "Packed array too short: have " + data.length + " longs, need " + expectedLongs);
         }
         for (int i = 0; i < totalEntries; i++) {
-            int longIdx = i / entriesPerLong;
-            int shift = (i % entriesPerLong) * bitsPerEntry;
-            out[i] = (int) ((data[longIdx] >>> shift) & mask);
+            long bitPos    = (long) i * (long) bitsPerEntry;
+            int  longIdx   = (int) (bitPos >>> 6);            // /64
+            int  bitInLong = (int) (bitPos & 63L);            // %64
+            long lo = data[longIdx] >>> bitInLong;
+            long value;
+            int endBit = bitInLong + bitsPerEntry;
+            if (endBit <= 64) {
+                value = lo & mask;
+            } else {
+                long hi = data[longIdx + 1] << (64 - bitInLong);
+                value = (lo | hi) & mask;
+            }
+            out[i] = (int) value;
         }
         return out;
     }
 
-    /** Encodes per-cell palette indices into a word-aligned packed long array. */
+    /** Encodes per-cell palette indices into a compact packed long array. */
     public static long[] encode(int[] entries, int bitsPerEntry) {
         if (bitsPerEntry < 1 || bitsPerEntry > 32) {
             throw new IllegalArgumentException("bitsPerEntry out of range: " + bitsPerEntry);
@@ -75,7 +95,6 @@ public final class PackedLongArray {
         int total = entries.length;
         if (total == 0) return new long[0];
 
-        int entriesPerLong = 64 / bitsPerEntry;
         long mask = (1L << bitsPerEntry) - 1L;
         long[] out = new long[requiredLongs(total, bitsPerEntry)];
         for (int i = 0; i < total; i++) {
@@ -84,9 +103,15 @@ public final class PackedLongArray {
                 throw new IllegalArgumentException(
                         "entry " + v + " at index " + i + " exceeds " + bitsPerEntry + " bits");
             }
-            int longIdx = i / entriesPerLong;
-            int shift = (i % entriesPerLong) * bitsPerEntry;
-            out[longIdx] |= ((long) v & mask) << shift;
+            long val       = (long) v & mask;
+            long bitPos    = (long) i * (long) bitsPerEntry;
+            int  longIdx   = (int) (bitPos >>> 6);
+            int  bitInLong = (int) (bitPos & 63L);
+            out[longIdx] |= val << bitInLong;
+            int endBit = bitInLong + bitsPerEntry;
+            if (endBit > 64) {
+                out[longIdx + 1] |= val >>> (64 - bitInLong);
+            }
         }
         return out;
     }
