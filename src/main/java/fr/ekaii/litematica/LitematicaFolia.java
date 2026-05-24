@@ -87,26 +87,43 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         getLogger().info("LitematicaFolia ready.");
     }
 
-    /** Log channels a player declares — useful to detect Servux-capable clients in the wild. */
+    /** Verbose: log EVERY channel a player declares on this server. */
     @EventHandler
     public void onChannelRegister(PlayerRegisterChannelEvent e) {
-        String ch = e.getChannel();
-        if (ch.startsWith("servux:") || ch.startsWith("litematica") || ch.startsWith("malilib")) {
-            getLogger().info("[diag] " + e.getPlayer().getName() + " registered channel: " + ch);
-        }
+        getLogger().info("[diag-net] +register " + e.getPlayer().getName() + " channel=" + e.getChannel());
+    }
+
+    @EventHandler
+    public void onChannelUnregister(org.bukkit.event.player.PlayerUnregisterChannelEvent e) {
+        getLogger().info("[diag-net] -unregister " + e.getPlayer().getName() + " channel=" + e.getChannel());
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
-        // Dump after a short delay so the client has time to send its registers.
+        // Initial dump on join (channels declared during config phase).
+        getLogger().info("[diag-net] " + e.getPlayer().getName()
+                + " joined; channels @ join = " + String.join(", ", e.getPlayer().getListeningPluginChannels()));
+        // Push Servux metadata proactively after the channel registration
+        // settles (~3s). Litematica 0.27.x doesn't auto-send the metadata
+        // request on join — pushing it server-initiated flips its
+        // servuxRegistered flag so the Server-side paste menu options
+        // surface and the client stops falling back to /fill spam.
         org.bukkit.Bukkit.getAsyncScheduler().runDelayed(this, t -> {
-            var chans = e.getPlayer().getListeningPluginChannels();
-            String summary = chans.stream()
-                    .filter(c -> c.startsWith("servux:") || c.startsWith("litematica") || c.startsWith("malilib") || c.startsWith("minecraft:"))
-                    .reduce((a, b) -> a + ", " + b)
-                    .orElse("(none of interest)");
-            getLogger().info("[diag] " + e.getPlayer().getName() + " channels after 5s: " + summary);
-        }, 5, java.util.concurrent.TimeUnit.SECONDS);
+            if (e.getPlayer().isOnline() && servuxBridge != null && servuxBridge.isEnabled()
+                    && e.getPlayer().getListeningPluginChannels()
+                            .contains(fr.ekaii.litematica.protocol.ProtocolConstants.CHANNEL_LITEMATICS)) {
+                servuxBridge.getMetadataHandler().pushMetadata(e.getPlayer());
+            }
+        }, 3, java.util.concurrent.TimeUnit.SECONDS);
+        // Re-dump after 5s and 30s so we catch lazy/late registrations.
+        org.bukkit.Bukkit.getAsyncScheduler().runDelayed(this, t ->
+                getLogger().info("[diag-net] " + e.getPlayer().getName()
+                        + " channels @ +5s = " + String.join(", ", e.getPlayer().getListeningPluginChannels())),
+                5, java.util.concurrent.TimeUnit.SECONDS);
+        org.bukkit.Bukkit.getAsyncScheduler().runDelayed(this, t ->
+                getLogger().info("[diag-net] " + e.getPlayer().getName()
+                        + " channels @ +30s = " + String.join(", ", e.getPlayer().getListeningPluginChannels())),
+                30, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     @Override

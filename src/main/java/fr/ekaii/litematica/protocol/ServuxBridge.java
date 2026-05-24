@@ -158,6 +158,9 @@ public final class ServuxBridge {
 
     public boolean isEnabled() { return enabled; }
 
+    /** Exposes the metadata handler so the plugin can proactively push S2C_METADATA on join. */
+    public MetadataHandler getMetadataHandler() { return metadataHandler; }
+
     /**
      * Convenience send-to-player on the Litematics channel. No-op if the
      * bridge is disabled or the player does not declare itself as a

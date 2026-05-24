@@ -78,6 +78,33 @@ public final class MetadataHandler {
         return c;
     }
 
+    /**
+     * Proactively push the metadata to a player after they've joined and
+     * the {@code servux:litematics} channel has been registered. Litematica
+     * 0.27.x does NOT auto-send {@code C2S_METADATA_REQUEST} on join — it
+     * only sends it when the user triggers a Servux-using action. By
+     * pushing the metadata server-initiated, we flip the client's
+     * {@code servuxRegistered=true} flag without requiring user
+     * interaction, which makes Litematica's "Server-side paste" menu
+     * options surface immediately and prevents falling back to the
+     * legacy {@code /setblock}+{@code /fill} spam path.
+     *
+     * <p>Safe to call multiple times — Litematica is idempotent on
+     * metadata receipt.
+     */
+    public void pushMetadata(Player player) {
+        try {
+            LitematicNbt.NbtCompound meta = buildMetadataPayload();
+            byte[] bytes = PacketHandler.buildLitematics(
+                    ProtocolConstants.Litematics.S2C_METADATA,
+                    w -> w.writeNbt(meta));
+            player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, bytes);
+            LOG.info("[diag-net] TX servux:litematics S2C_METADATA pushed to " + player.getName());
+        } catch (Throwable t) {
+            LOG.warning("pushMetadata failed for " + player.getName() + ": " + t);
+        }
+    }
+
     // BlockEntity / Entity / Bulk replies live in their own dedicated
     // handlers (see BlockEntityRequestHandler, EntityRequestHandler,
     // BulkNbtRequestHandler). MetadataHandler is now only responsible

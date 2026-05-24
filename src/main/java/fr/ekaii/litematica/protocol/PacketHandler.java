@@ -73,10 +73,16 @@ public final class PacketHandler {
      * </ul>
      */
     public void onLitematicsPacket(String channel, Player player, byte[] payload) {
-        if (!checkBaseGate(player)) return;
+        LOG.info("[diag-net] RX " + channel + " from " + player.getName()
+                + " len=" + payload.length + " hex=" + hexDump(payload, 96));
+        if (!checkBaseGate(player)) {
+            LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
+            return;
+        }
         try {
             ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
             int type = r.readVarInt();
+            LOG.info("[diag-net] RX " + channel + " type=" + type + " from " + player.getName());
             switch (type) {
                 case ProtocolConstants.Litematics.C2S_METADATA_REQUEST ->
                     metadata.onMetadataRequest(player, r);
@@ -102,10 +108,16 @@ public final class PacketHandler {
     }
 
     public void onStructuresPacket(String channel, Player player, byte[] payload) {
-        if (!checkBaseGate(player)) return;
+        LOG.info("[diag-net] RX " + channel + " from " + player.getName()
+                + " len=" + payload.length + " hex=" + hexDump(payload, 96));
+        if (!checkBaseGate(player)) {
+            LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
+            return;
+        }
         try {
             ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
             int type = r.readVarInt();
+            LOG.info("[diag-net] RX " + channel + " type=" + type + " from " + player.getName());
             switch (type) {
                 case ProtocolConstants.Structures.C2S_REGISTER ->
                     structures.onRegister(player, r);
@@ -180,5 +192,18 @@ public final class PacketHandler {
         if (player.isOp()) return true;
         if (player.hasPermission(PERM_USE)) return true;
         return false;
+    }
+
+    /** Hex-dump the first {@code max} bytes of {@code data} for [diag-net] logs. */
+    private static String hexDump(byte[] data, int max) {
+        if (data == null || data.length == 0) return "<empty>";
+        int n = Math.min(data.length, max);
+        StringBuilder sb = new StringBuilder(n * 3 + 8);
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(' ');
+            sb.append(String.format("%02x", data[i] & 0xFF));
+        }
+        if (data.length > max) sb.append(" …(+").append(data.length - max).append("B)");
+        return sb.toString();
     }
 }
