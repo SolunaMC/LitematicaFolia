@@ -8,7 +8,7 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~04:33 — bootstrap)
+## State (last tick: 2026-05-24 ~04:40 — P1e harness landed)
 
 ### Done
 - [x] `admin_ekaii/litematica-folia-ekaii` repo created on forgejo.ekaii.fr
@@ -20,10 +20,11 @@ Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prom
 - [x] Skeleton `LitematicaFolia` JavaPlugin
 - [x] `.gitignore`, `README.md`
 - [x] Memory `project_litematica_folia_ekaii.md` + `feedback_forgejo_secret_format.md`
+- [x] **P1e — smoke harness** : `test-harness/run-tests.sh` (hermetic Luminol 26.1.2 boot + RCON shake-out + 8-pattern log scan), `test-harness/paste-smoke.sh` (fixture paste + world-mtime verification), `test-harness/lib/rcon.py` (stdlib Source RCON), `test-harness/README.md`. Dry-run validated: graceful FAIL on missing jar / missing fixtures.
 
 ### In flight / next
 - [ ] Initial commit + push to forgejo
-- [ ] Spawn agents: litematic-core parser, PasteOperation, smoke harness
+- [ ] Spawn agents: litematic-core parser (P1a), PasteOperation (P1b)
 - [ ] First green CI build
 
 ## Architecture
