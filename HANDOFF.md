@@ -8,7 +8,20 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~05:18 — P4 (hardening + release) landed)
+## State (last tick: 2026-05-24 ~05:40 — **v0.1.0 LIVE in prod, autonomous loop terminated**)
+
+### Production hot-load (2026-05-24)
+
+- `mc-creaclone` log @ `11:16:42` UTC: `Loading server plugin LitematicaFolia v0.1.0+26.1.2` → `Enabling` → `LitematicaCommands: /litematica registered via Brigadier.` → `LitematicaFolia ready.` ✓
+- `mc-plot` log @ `11:03:06` UTC: `Folia detected: true` → `Brigadier` → `Servux bridge disabled (protocol.enableServuxBridge=false).` → `ready` ✓
+- Jars staged at `/opt/mc-stack/{creaclone,plot}/plugins/LitematicaFolia-0.1.0+26.1.2-all.jar` (125 K each, owner `root:exo`).
+- **Autonomous loop terminated.** Scope v0.1.x is COMPLETE.
+
+### Open roadmap (future manual ticks)
+
+1. **Save v2 NMS impl** — API surface added (`02a407f`), stubs return null/empty; needs `BlockEntity#saveWithFullMetadata` / `Entity#save` / `ServerLevel.getBlockTicks()` wiring + LitematicaCommands.handleSave() rewrite + round-trip test. Task #10.
+2. **Servux real-client smoke** — Fabric client w/ Litematica + Servux against creaclone/plot, `enableServuxBridge=true`. Task #11.
+3. **P3 FAWE ClipboardFormat adapter** — blocked on `mvn.intellectualsites.com` NXDOMAIN. Poll DNS periodically. Task #8.
 
 ### v0.1.0 release
 
