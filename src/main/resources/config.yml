@@ -1,0 +1,42 @@
+# LitematicaFolia configuration
+
+paste:
+  # Hard cap on blocks placed per chunk-task before yielding back to the
+  # region scheduler. Prevents long ticks on huge schematics.
+  maxBlocksPerChunkTask: 8192
+  # Spawn entities (players excluded) found in the schematic file.
+  allowEntities: true
+  # Reload TileEntity NBT data (chests, signs, etc).
+  allowTileEntities: true
+  # Re-schedule PendingBlockTicks / PendingFluidTicks from the schematic.
+  # Differentiator vs WorldEdit, which discards them.
+  allowPendingTicks: true
+  # If true, paste blocks first, then sweep updates (physics/observers) at the
+  # end. Recommended for redstone-heavy schematics.
+  deferredPhysics: true
+  # If true, paste observers and pistons LAST (see Litematica issue #538).
+  observersLast: true
+  # Run BlockState NBT through DataFixerUpper if MinecraftDataVersion mismatches.
+  # If false, reject mismatched DataVersion files outright.
+  runDataFixer: true
+  # If runDataFixer is true, lowest DataVersion accepted (anything older is rejected).
+  # 2586 = MC 1.16.5, 3953 = MC 1.21.x. Default = 2586.
+  minDataVersion: 2586
+
+schematic:
+  # Schematics root directory (relative to plugin data folder).
+  directory: schematics
+  # Max file size accepted (bytes). Default 64 MiB.
+  maxFileSizeBytes: 67108864
+
+protocol:
+  # Enable the Servux-compatible custom payload channel so vanilla Litematica
+  # clients (with Servux disabled) can interact directly.
+  enableServuxBridge: false
+  # Channel name. Default matches sakura-ryoko/servux for client compatibility.
+  channel: "servux:litematics"
+
+fawe:
+  # Register a FAWE ClipboardFormat for .litematic when FAWE is detected.
+  # Allows //schem load file.litematic in FAWE.
+  registerClipboardFormat: true

@@ -1,0 +1,24 @@
+name: ${name}
+version: ${version}
+main: fr.ekaii.litematica.LitematicaFolia
+description: ${description}
+authors: ["exo"]
+api-version: "${apiVersion}"
+folia-supported: true
+softdepend: [LuckPerms, FastAsyncWorldEdit]
+permissions:
+  litematica.use:
+    description: Base permission
+    default: op
+  litematica.paste:
+    description: Paste a .litematic file
+    default: op
+  litematica.save:
+    description: Save a world region as .litematic
+    default: op
+  litematica.materials:
+    description: Compute materials list
+    default: op
+  litematica.admin:
+    description: Bypass region checks
+    default: op

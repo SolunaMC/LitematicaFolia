@@ -1,0 +1,26 @@
+name: ${name}
+version: ${version}
+main: fr.ekaii.litematica.LitematicaFolia
+description: ${description}
+authors: ["exo"]
+api-version: "${apiVersion}"
+folia-supported: true
+load: STARTUP
+bootstrapper: fr.ekaii.litematica.LitematicaBootstrap
+loader: fr.ekaii.litematica.LitematicaLoader
+permissions:
+  litematica.use:
+    description: Base permission to use the plugin
+    default: op
+  litematica.paste:
+    description: Paste a .litematic file into the world
+    default: op
+  litematica.save:
+    description: Save a world region as .litematic
+    default: op
+  litematica.materials:
+    description: Compute the materials list of a .litematic
+    default: op
+  litematica.admin:
+    description: Bypass region checks (worldguard, plotsquared)
+    default: op

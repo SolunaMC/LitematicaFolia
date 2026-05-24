@@ -1,0 +1,18 @@
+[versions]
+luckperms = "5.4"
+fawe = "2.14.0-SNAPSHOT"
+
+# Plugins
+paperweight-userdev = "2.0.0-SNAPSHOT"
+run-paper = "3.0.2"
+shadow = "9.3.0"
+
+[libraries]
+luckperms = { group = "net.luckperms", name = "api", version.ref = "luckperms" }
+fawe-bukkit = { group = "com.fastasyncworldedit", name = "FastAsyncWorldEdit-Bukkit", version.ref = "fawe" }
+fawe-core = { group = "com.fastasyncworldedit", name = "FastAsyncWorldEdit-Core", version.ref = "fawe" }
+
+[plugins]
+paperweight-userdev = { id = "io.papermc.paperweight.userdev", version.ref = "paperweight-userdev" }
+run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-paper" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
