@@ -8,7 +8,66 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~05:15 — P1a + P1b + P1c + P1d + P1e + P2 landed)
+## State (last tick: 2026-05-24 ~05:18 — P4 (hardening + release) landed)
+
+### v0.1.0 release
+
+- Tag `v0.1.0+26.1.2` pushed
+- Forgejo release: https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases/tag/v0.1.0+26.1.2 (id=1766)
+- Asset: `LitematicaFolia-0.1.0+26.1.2-all.jar` (≈128 KiB) uploaded
+- Smoke harness: **PASS**
+- Paste smoke: **PASS** (2 fixtures pasted via RCON; 297 + 64 blocks; latest.log contains `paste complete: …`)
+- Stress smoke: **PASS**
+  - Fixture: 256×64×256 = 4 194 304 cells, 11-entry palette, deterministic mix (80% terrain / 15% chests / 5% redstone)
+  - Disk size: 3 673 750 bytes (3.5 MiB) gzipped
+  - Paste duration (wall clock — server-internal): **9.572 s** for 4.2 M blocks
+  - Paste 4 194 304 blocks + 629 533 TileEntities, **0 errors**
+  - Peak JVM RSS during paste: **3.70 GiB** (heap was -Xmx4G)
+  - Total stress-smoke run including boot: 15 s post-fixture-generation
+  - No WrongThreadException / OOM / RegionFileSizeException / SEVERE patterns
+
+### Deploy status (Phase E)
+
+- exo reachable; mc-creaclone + mc-plot running healthy
+- Jar copied to:
+  - `/tmp/LitematicaFolia-0.1.0+26.1.2-all.jar` (staging)
+  - `/opt/mc-stack/creaclone/plugins/LitematicaFolia-0.1.0+26.1.2-all.jar`
+  - `/opt/mc-stack/plot/plugins/LitematicaFolia-0.1.0+26.1.2-all.jar`
+- **No restart performed** — per `feedback_mc_restart_via_rcon` rule. Plugin
+  will load on next planned restart.
+
+### P4 — production hardening (2026-05-24 ~05:17)
+
+- Fixed `LitematicaCommands.buildFlagNode` StackOverflowError — was recursing
+  unbounded across 4 flags; rewritten with bitmask-tracked usedMask so each
+  level only chains flags not yet consumed.
+- Added `PasteOperation.cancel()` — cooperative AtomicBoolean checked between
+  every block write; `applyChunkBlocks` short-circuits on flip. Wired
+  `/litematica cancel [ticket]` command with per-paste ticket id (sender name +
+  monotonic counter).
+- `PasteOperation` now logs full stack traces for non-Folia exceptions
+  (`LOG.log(Level.WARNING, ..., t)`) so non-Folia bugs are not silently
+  swallowed via the errors queue.
+- `paste-smoke.sh`:
+  - Re-boot log-offset bug fixed (was matching previous run's `Done (`).
+  - `ls -1 luminol*.jar paper*.jar` no longer kills `set -e pipefail`.
+  - World-mtime check broadened to walk children (macOS parent dir mtime
+    doesn't tick on file rewrites in place).
+  - Treats `paste complete:` log entries as authoritative success signal.
+- `senderWorld` now resolves `RemoteConsoleCommandSender` (RCON) to the primary
+  world — required for the paste-smoke harness.
+- Added 256×64×256 stress fixture (`Fixtures.largeFixture256`) — 80% terrain /
+  15% chests / 5% redstone, deterministic RNG seed `0x11717AC711CAL`.
+  `LargeFixtureTest` gated on `-Dlitematica.stress=true`. Generated file
+  `schematics-fixtures/large-256.litematic` ≈ 3.5 MiB.
+- New `test-harness/stress-smoke.sh` — regenerates fixture, boots server, fires
+  paste, polls latest.log for `paste complete:` with 15-min hard cap.
+- `build.gradle.kts` forwards `-Dlitematica.stress=true` to test JVM; test heap
+  bumped to 2 GiB so LargeFixtureTest doesn't OOM.
+- New docs: `CHANGELOG.md`, `DISK_USAGE.md`.
+- README updated with badges + screenshot placeholder.
+
+## State (previous tick: 2026-05-24 ~05:15 — P1a + P1b + P1c + P1d + P1e + P2 landed)
 
 ### Done
 - [x] `admin_ekaii/litematica-folia-ekaii` repo created on forgejo.ekaii.fr
