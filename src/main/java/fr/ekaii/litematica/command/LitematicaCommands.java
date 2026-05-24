@@ -486,16 +486,28 @@ public final class LitematicaCommands {
                     int xMaxC = Math.min(maxX, (fcx << 4) + 15);
                     int zMinC = Math.max(minZ, fcz << 4);
                     int zMaxC = Math.min(maxZ, (fcz << 4) + 15);
+                    // NMS-direct read: world.getBlockAt(...).getBlockData() goes
+                    // through a CraftChunk snapshot that can be stale on Folia
+                    // when paste wrote via LevelChunkSection.setBlockState. Read
+                    // the live LevelChunk directly — same region thread, same
+                    // owning section, fresh state.
+                    net.minecraft.server.level.ServerLevel nmsLevel =
+                            ((org.bukkit.craftbukkit.CraftWorld) world).getHandle();
+                    net.minecraft.world.level.chunk.LevelChunk nmsChunk =
+                            nmsLevel.getChunk(fcx, fcz);
                     for (int x = xMinC; x <= xMaxC; x++) {
                         for (int z = zMinC; z <= zMaxC; z++) {
                             for (int y = minY; y <= maxY; y++) {
-                                Block b;
+                                net.minecraft.world.level.block.state.BlockState nmsState;
                                 try {
-                                    b = world.getBlockAt(x, y, z);
+                                    nmsState = nmsChunk.getBlockState(
+                                            new net.minecraft.core.BlockPos(x, y, z));
                                 } catch (Throwable t) {
                                     continue;
                                 }
-                                BlockData data = b.getBlockData();
+                                Block b = world.getBlockAt(x, y, z); // for TE check only
+                                BlockData data = org.bukkit.craftbukkit.block.data.CraftBlockData
+                                        .createData(nmsState);
                                 String asString = data.getAsString();
                                 BlockStateEntry entry = parseBlockState(asString);
                                 int idx;
