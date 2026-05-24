@@ -8,7 +8,51 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 — P11a Servux wire-format alignment)
+## State (last tick: 2026-05-24 ~16:35 — **P11b servux-smoke green; Direct Paste verified headlessly**)
+
+### P11b — protocol bot + servux-smoke (2026-05-24 ~16:35)
+
+- `test-harness/protocol-bot/src/ProtocolBot.java` — single-file headless MC
+  26.1.2 client (proto 775) using only `java.net.Socket` +
+  `DataInputStream/OutputStream` + the project's own `LitematicNbt`. Drives
+  full Handshake → Login → Configuration → Play, answers KeepAlive +
+  PlayerPosition + SelectKnownPacks, sends `minecraft:register` then
+  `servux:litematics` `C2S_METADATA_REQUEST` and the corrected three-frame
+  Litematic-Transmit sequence (Start / Data / End) wrapped in the outer
+  type-13 Servux PacketSplitter.
+- `test-harness/servux-smoke.sh` — hermetic harness: builds plugin jar,
+  boots Luminol 26.1.2, flips `protocol.enableServuxBridge=true` in the
+  scratch `plugins/LitematicaFolia/config.yml` (committed config.yml stays
+  `false`), waits for `Servux bridge online`, `op`s the bot, compiles the
+  bot against `build/classes/java/main`, runs it, then verifies both the
+  `paste complete:` log line and region-file mtime advance.
+- Packet IDs reverse-engineered via `javap` against the Luminol jar
+  (LoginProtocols / ConfigurationProtocols / GameProtocols static-init
+  bytecode + BootstrapMethods table). Documented in
+  `test-harness/protocol-bot/README.md`.
+- **End-to-end PASS after 1 wire-format revision.** First draft used the
+  deprecated `STREAM_START(12) + STREAM_DATA(13)` two-packet-type model
+  that P11a had already replaced with single-channel type-13 outer
+  splitter + Transmit sub-protocol keyed by `SliceKey`. Updated bot to
+  send three Transmit frames (Start / Data / End) through the outer
+  splitter.
+- Bot log shows `METADATA OK — bridge active` (4-key Servux compound:
+  `name=litematic_data`, `id=servux:litematics`, `version=1`, `servux=
+  LitematicaFolia 0.1.0`). Server log shows
+  `[LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0
+  entities, 0 err in 237ms`. Stone-cube-4 fixture (4³ solid stone)
+  successfully streamed from the bot and placed via PasteOperation +
+  RegionScheduler — zero WrongThreadException / SEVERE / RegionFile
+  patterns.
+- Artefacts committed: `test-harness/servux-smoke.txt` (PASS),
+  `test-harness/servux-paste-evidence.log` (server log excerpt).
+- **Fix-cycle count: 1** (initial protocol revision after observing
+  P11a's converged `DirectPasteHandler`).
+- Block-state RCON verification (`execute if block` / `setblock replace`)
+  is blocked by a Folia NPE in `Level.getCurrentWorldData()` for commands
+  running on a region thread without a player context — we fall back to
+  the authoritative `paste complete:` log signal + region-file mtime as
+  the success criteria.
 
 ### P11a — Servux wire format validated against source (2026-05-24)
 
