@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
@@ -60,6 +61,20 @@ import java.util.logging.Logger;
 public final class PasteOperation {
 
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/PasteOperation");
+
+    /**
+     * Throttle for concurrent in-flight chunk tasks across ALL paste operations.
+     * Without this, a 397K-block paste fires 100+ {@code runOnRegion} tasks in
+     * &lt;1ms, which inflates Paper's chunk save queue and triggers regionfile
+     * header races. Axiom uses {@code MAX_CHUNK_FUTURES = 256}; we cap lower
+     * (32) since LitematicaFolia is invoked manually (not on every set_block
+     * packet) and the lower bound massively reduces dirty-chunk pressure.
+     *
+     * Semaphore acquire blocks the dispatch loop, providing back-pressure. The
+     * actual chunk write still runs on the owning region thread.
+     */
+    private static final int CHUNK_THROTTLE_PERMITS = 32;
+    private static final Semaphore CHUNK_THROTTLE = new Semaphore(CHUNK_THROTTLE_PERMITS);
 
     /** Blocks whose physics behaviour requires "observers-last" placement. */
     public static final Set<String> ACTIVE_BLOCK_NAMES = Set.of(
@@ -170,9 +185,23 @@ public final class PasteOperation {
             List<PendingWrite> writes = entry.getValue();
             List<PendingTileEntity> tes = teByChunk.getOrDefault(key, Collections.emptyList());
             // Pass 1 places blocks + TileEntities; entities & ticks are run in pass 2.
+            // Throttle: back-pressure on dispatch loop so no more than
+            // CHUNK_THROTTLE_PERMITS chunks are in flight at once (prevents
+            // regionfile-header races under heavy paste load).
+            try {
+                CHUNK_THROTTLE.acquire();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                errors.add("paste interrupted during throttle acquire (pass1)");
+                break;
+            }
             pass1Futures.add(FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
-                applyChunkBlocks(world, writes, blocksPlaced, errors);
-                applyChunkTileEntities(tes, tilesPlaced, errors);
+                try {
+                    applyChunkBlocks(world, writes, blocksPlaced, errors);
+                    applyChunkTileEntities(tes, tilesPlaced, errors);
+                } finally {
+                    CHUNK_THROTTLE.release();
+                }
             }));
         }
 
@@ -195,22 +224,34 @@ public final class PasteOperation {
                 List<PendingEntity>    ents    = entitiesByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      bticks  = blockTicksByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      fticks  = fluidTicksByChunk.getOrDefault(key, Collections.emptyList());
+                // Throttle pass-2 dispatch the same way as pass-1.
+                try {
+                    CHUNK_THROTTLE.acquire();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    errors.add("paste interrupted during throttle acquire (pass2)");
+                    break;
+                }
                 p2.add(FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
-                    if (!writes.isEmpty()) {
-                        applyChunkBlocks(world, writes, blocksPlaced, errors);
-                    }
-                    if (options.placeEntities() && !ents.isEmpty()) {
-                        applyChunkEntities(world, ents, entitiesSpawned, errors);
-                    }
-                    if (options.placePendingTicks()) {
-                        for (PendingTick t : bticks) {
-                            try { nms.scheduleBlockTick(world, t.x, t.y, t.z, t.nbt); }
-                            catch (Throwable ex) { errors.add("blockTick: " + ex.getMessage()); }
+                    try {
+                        if (!writes.isEmpty()) {
+                            applyChunkBlocks(world, writes, blocksPlaced, errors);
                         }
-                        for (PendingTick t : fticks) {
-                            try { nms.scheduleFluidTick(world, t.x, t.y, t.z, t.nbt); }
-                            catch (Throwable ex) { errors.add("fluidTick: " + ex.getMessage()); }
+                        if (options.placeEntities() && !ents.isEmpty()) {
+                            applyChunkEntities(world, ents, entitiesSpawned, errors);
                         }
+                        if (options.placePendingTicks()) {
+                            for (PendingTick t : bticks) {
+                                try { nms.scheduleBlockTick(world, t.x, t.y, t.z, t.nbt); }
+                                catch (Throwable ex) { errors.add("blockTick: " + ex.getMessage()); }
+                            }
+                            for (PendingTick t : fticks) {
+                                try { nms.scheduleFluidTick(world, t.x, t.y, t.z, t.nbt); }
+                                catch (Throwable ex) { errors.add("fluidTick: " + ex.getMessage()); }
+                            }
+                        }
+                    } finally {
+                        CHUNK_THROTTLE.release();
                     }
                 }));
             }
@@ -228,9 +269,18 @@ public final class PasteOperation {
             List<CompletableFuture<Void>> sweeps = new ArrayList<>();
             int minCX = bbox.minX >> 4, maxCX = bbox.maxX >> 4;
             int minCZ = bbox.minZ >> 4, maxCZ = bbox.maxZ >> 4;
+            outer:
             for (int cx = minCX; cx <= maxCX; cx++) {
                 for (int cz = minCZ; cz <= maxCZ; cz++) {
                     int fcx = cx, fcz = cz;
+                    // Throttle deferred-physics sweep dispatch.
+                    try {
+                        CHUNK_THROTTLE.acquire();
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        errors.add("paste interrupted during throttle acquire (sweep)");
+                        break outer;
+                    }
                     sweeps.add(FoliaCompat.runOnRegion(plugin, world, fcx, fcz, () -> {
                         try {
                             int xMin = Math.max(bbox.minX, fcx << 4);
@@ -255,6 +305,8 @@ public final class PasteOperation {
                             if (!FoliaThreadException.isFoliaThreadException(t)) {
                                 errors.add("physics-sweep chunk (" + fcx + "," + fcz + "): " + t.getMessage());
                             }
+                        } finally {
+                            CHUNK_THROTTLE.release();
                         }
                     }));
                 }

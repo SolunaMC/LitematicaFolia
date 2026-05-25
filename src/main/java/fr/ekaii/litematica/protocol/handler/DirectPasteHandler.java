@@ -15,9 +15,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
 import java.io.ByteArrayOutputStream;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -73,11 +73,19 @@ public final class DirectPasteHandler {
      */
     private final PacketSplitter splitter;
 
-    /** Inner Transmit-protocol state, keyed by Servux {@code SliceKey}. */
-    private final Map<Long, TransmitSession> transmits = new HashMap<>();
+    /**
+     * Inner Transmit-protocol state, keyed by Servux {@code SliceKey}.
+     * ConcurrentHashMap (v0.4.0): plugin-message handlers may run on
+     * different Netty IO threads simultaneously for two concurrent slice
+     * uploads. Previous {@code HashMap} usage was a thread-safety bug.
+     */
+    private final Map<Long, TransmitSession> transmits = new ConcurrentHashMap<>();
 
-    /** Map UUID → SliceKey so we can drop sessions on disconnect. */
-    private final Map<UUID, Long> playerSessions = new HashMap<>();
+    /**
+     * Map UUID → SliceKey so we can drop sessions on disconnect.
+     * Concurrent for same reason as {@code transmits}.
+     */
+    private final Map<UUID, Long> playerSessions = new ConcurrentHashMap<>();
 
     public DirectPasteHandler(Plugin plugin) {
         this.plugin = plugin;
