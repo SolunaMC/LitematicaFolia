@@ -2,29 +2,68 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.3.0+26.1.2 — 2026-05-25
+
+### Added — Direct Paste end-to-end via Servux
+
+- **Inline `LitematicaPaste` task handler** (`protocol/handler/DirectPasteHandler.java`) — supports the maruohon Litematica payload schema (separate from the upstream Servux `Litematic-TransmitStart/Data/End` multi-frame path, both now handled).
+- **Servux BulkRequest fulfillment** — server replies to `C2S_BLOCK_ENTITY_REQUEST` (3), `C2S_ENTITY_REQUEST` (4), `C2S_BULK_NBT_REQUEST` (7) with real NBT, with per-player rate limiter.
+- **Easy Place V3 server-side scaffold** — PacketEvents 2.7 listener that decodes the X-fractional protocol value from `UseItemOnPacket`. Gated off by default (`protocol.enableEasyPlace`); local Luminol version-string mismatch makes runtime activation flaky on pre-release builds.
+- **NMS save extractors** — `extractTileEntityNbt`, `extractEntityNbt`, `extractPendingBlockTicks/Fluids` API surface for `/litematica save` v2. Real impl partial (iteration bug, tracked).
+- **256³ stress fixture** (`Fixtures.largeFixture256`) — 4.2 M blocks, 80% terrain / 15% chests / 5% redstone, gated `-Dlitematica.stress=true`.
+- **Java protocol bot** (`test-harness/protocol-bot/`) — headless MC client, drives Servux Direct Paste end-to-end for autonomous validation.
+- **Local Fabric client harness** (`test-harness/fabric-client/`) — installs Fabric Loader 0.19.2 + MC 1.21.11 + MaLiLib + Litematica 0.27.6 for visual smoke.
+
+### Validated in production
+
+- Direct Paste of **869,514 blocks + 6,516 tile entities in 5.6 s** on creaclone via real Litematica 0.27.6 client.
+- Stress paste of **4,194,304 blocks + 629,533 tile entities in 9.5 s**, zero region-file corruption.
+- 62 JUnit tests + 3 smoke harnesses (boot, paste, stress) all green reproducibly.
+
+### Fixed
+
+- **Brigadier `StackOverflowError`** at command registration — flag literals chained recursively without dedup. Fixed via bitmask of used-flags.
+- **Async paste parse** — `/litematica paste` now parses `.litematic` off the command thread via `FoliaCompat.runAsync`. Eliminates Folia Watchdog ERRORs on schematics > 3 MiB.
+- **`PackedLongArray` packing format** — switched from word-aligned (MC 1.16+ chunk-section style) to compact cross-word. `.litematic` uses compact regardless of MC version. Symptom: "Packed array too short" for bitsPerEntry ∈ {5,6,7,9-15}.
+- **`SubRegions` vs `Schematics`** — the actual schematic NBT lives under the `Schematics` key in the `LitematicaPaste` payload (not `SubRegions`, which holds per-region placement overrides).
+- **PacketSplitter cap** — raised default from upstream Servux's 16 MiB to **128 MiB**, configurable via `protocol.maxDirectPasteSize`. Friendly chat error on oversize instead of silent drop.
+- **Servux wire format** — 7 byte-level discrepancies vs upstream `sakura-ryoko/servux 26.1.2-0.10.2` fixed (metadata key set, `ChunkPos` packed-long encoding, splitter framing, Easy Place protocol misconception, deprecated channel alias).
+- **`S2C_METADATA` push on join** — Litematica 0.27.x doesn't auto-send `C2S_METADATA_REQUEST` on join. Server now pushes the metadata 3 s after `PlayerJoinEvent` so the client flips `servuxRegistered=true` without user interaction.
+
+### Documented — production gotchas
+
+These are critical to know if you're deploying:
+
+- **Litematica client gate**: `ENTITY_DATA_SYNC = true` must be set client-side or Servux integration silently no-ops. `PASTE_USING_SERVUX = true` alone is useless. The name is misleading; it's the master switch.
+- **Velocity 3.5 `[packet-limiter] decompressed-bytes-per-second`** defaults to 5 MiB/s → kicks Direct Paste burst uploads. Set to `-1`.
+- **Velocity 3.5 `compression-threshold`** should stay at default 256. Setting to `-1` tanks normal play (uncompressed chunks). The 64× zip-bomb ratio check was removed in build 599+.
+- **Paper keep-alive default 30 s** — set `-Dpaper.playerconnection.keepalive=120` for clients running Mojang DataFixer on old `.litematic` files (e.g. DataVersion 3955 from MC 1.21.0).
+
+## 0.2.0+26.1.2 — 2026-05-24
+
+### Added — Servux protocol alignment
+
+- Servux wire-format aligned byte-for-byte with upstream `sakura-ryoko/servux 26.1.2-0.10.2` (`SERVUX_WIRE_FORMAT.md`).
+- 10 `ServuxByteCompatibilityTest` cases proving byte-equality with reference sequences.
+- `PacketSplitter` reassembly matching upstream `PacketSplitter.send/receive` (first-slice VarInt prefix, 16 MiB cap).
+
+### Fixed
+
+- `ChunkPos` encoding switched from two `Int`s to packed signed long.
+- `Easy Place V3` is not a custom Servux packet — Servux drives it via a server-side mixin on `ServerboundUseItemOnPacket`. Vendor-channel was a misunderstanding, now gated.
+
 ## 0.1.0+26.1.2 — 2026-05-24
 
 First public release. Reads `.litematic` schematics and pastes them into a live Minecraft 26.1.2 world. Folia-safe via per-chunk `RegionScheduler` dispatch. Vanilla-Paper compatible via runtime detection.
 
 ### Added
 
-- **P1a — `.litematic` parser** (`core/`): inline NBT reader/writer (all 12 tag types, gzip in/out, magic-byte sniffing), `BlockStateEntry`, `PackedLongArray` (word-aligned 1.16+ encoder/decoder), `LitematicReader` / `LitematicWriter`, `LitematicSchematic` / `LitematicRegion` (sign-normalised). Pure Java, zero external schematic libs. 27+ JUnit 5 round-trip tests.
-- **P1b — Folia-safe paste** (`paste/`): `PasteOperation` with two-pass `observersLast` placement, deferred physics sweep, per-chunk dispatch through `FoliaCompat.runOnRegion`. Cooperative `cancel()` flag checked between per-block writes.
-- **P1c — NMS bridge** (`nms/`): Paper 26.1.2 implementation (`NmsBridge26_1_2`) — `loadTileEntityNbt` via `BlockEntity.loadWithComponents`, `spawnEntityFromNbt` via `EntityType.loadEntityRecursive` + `tryAddFreshEntityWithPassengers`, scheduled block/fluid ticks, DataFixerUpper (`References.BLOCK_STATE` / `BLOCK_ENTITY` / `ENTITY`), full `Nbt*` ↔ `CompoundTag` round-trip. No-op fallback when NMS classes are missing.
-- **P1d — `/litematica` commands** (`command/`): Brigadier registration via `LifecycleEvents.COMMANDS`. Subcommands `paste`, `save`, `materials`, `list`, `info`, `cancel`, `reload`. `paste` supports optional coords, yaw, and chainable `--no-entities` / `--no-physics` / `--no-tile-entities` / `--no-pending-ticks` flags.
-- **P1e — smoke harness** (`test-harness/`): hermetic Luminol 26.1.2 boot, RCON shake-out, fail-pattern scan; `paste-smoke.sh` validates `litematica paste` end-to-end on real fixtures; `stress-smoke.sh` covers a 256×64×256 generated fixture (≈4.2 M cells) with a 15-minute hard cap.
-- **P2 — Servux-compatible network bridge** (`protocol/`): plugin-channel registration for `servux:litematics`, `servux:structures`, `servux:metadata`; metadata handshake (v3), bulk NBT replies (stubbed), V3 EasyPlace ack, direct-paste streaming. Off by default (`protocol.enableServuxBridge: false`). 8 round-trip protocol tests.
-- **Stress fixture & test** (`Fixtures.largeFixture256`, `LargeFixtureTest`): deterministic 256×64×256 generator (80% terrain, 15% chests, 5% redstone). Off by default; flip with `-Dlitematica.stress=true` or via `stress-smoke.sh`.
+- **`.litematic` parser** (`core/`): inline NBT reader/writer (all 12 tag types, gzip in/out, magic-byte sniffing), `BlockStateEntry`, `PackedLongArray`, `LitematicReader` / `LitematicWriter`, `LitematicSchematic` / `LitematicRegion` (sign-normalised). Pure Java, zero external schematic libs. 27+ JUnit 5 round-trip tests.
+- **Folia-safe paste** (`paste/`): `PasteOperation` with two-pass `observersLast` placement, deferred physics sweep, per-chunk dispatch through `FoliaCompat.runOnRegion`. Cooperative `cancel()` flag.
+- **NMS bridge** (`nms/`): Paper 26.1.2 implementation — `loadTileEntityNbt` via `BlockEntity.loadWithComponents`, `spawnEntityFromNbt` via `EntityType.loadEntityRecursive` + `tryAddFreshEntityWithPassengers`, scheduled block/fluid ticks, DataFixerUpper.
+- **`/litematica` commands** (`command/`): Brigadier registration via `LifecycleEvents.COMMANDS`. Subcommands `paste`, `save`, `materials`, `list`, `info`, `cancel`, `reload`.
+- **Smoke harness** (`test-harness/`): hermetic Luminol 26.1.2 boot, RCON shake-out, fail-pattern scan; `paste-smoke.sh` validates `litematica paste` end-to-end on real fixtures; `stress-smoke.sh` covers a 256×64×256 generated fixture (≈4.2 M cells) with a 15-minute hard cap.
 
-### Hardened
-
-- `PasteOperation` now logs full stack traces for non-Folia exceptions (previously only `errors` queue capture). Cancellation flag is checked between writes.
-- `LitematicaCommands.buildFlagNode` no longer recurses unbounded — `StackOverflowError` on first command registration on Luminol 26.1.2 fixed by bitmask-tracking already-used flags.
-- `senderWorld` falls back to the primary world for `RemoteConsoleCommandSender` (RCON), enabling smoke-harness and ops to paste from console without a player binding.
-
-### Known limitations
-
-- `/litematica save` v1 is blocks-only — tile entities, entities, pending ticks are not serialised yet (TODO `NmsBridge.fromNmsCompound`).
-- FAWE adapter (Phase 3) is on hold — `mvn.intellectualsites.com` NXDOMAIN. The build script keeps the dependency commented out behind a feature flag.
-- Servux bridge is wire-compatible but has not been validated against a real Litematica client; metadata BE/Entity replies are stubbed (`TODO smoke-test with vanilla Litematica client`).
-- `protocol.enableServuxBridge` is intentionally `false` by default — operators must opt in.
+[0.3.0+26.1.2]: https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases/tag/v0.3.0+26.1.2
+[0.2.0+26.1.2]: https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases/tag/v0.2.0+26.1.2
+[0.1.0+26.1.2]: https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases/tag/v0.1.0+26.1.2
