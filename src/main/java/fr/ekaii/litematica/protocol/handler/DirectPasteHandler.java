@@ -75,17 +75,38 @@ public final class DirectPasteHandler {
 
     /**
      * Inner Transmit-protocol state, keyed by Servux {@code SliceKey}.
-     * ConcurrentHashMap (v0.4.0): plugin-message handlers may run on
-     * different Netty IO threads simultaneously for two concurrent slice
-     * uploads. Previous {@code HashMap} usage was a thread-safety bug.
+     *
+     * <p>Was {@code HashMap} prior to v0.4.0; switched to
+     * {@link ConcurrentHashMap} because Servux-channel inbound packets are
+     * delivered on Paper's plugin-message dispatch worker — which on Folia is
+     * not pinned to a single region, and on Paper main can race with the
+     * {@link #onPlayerQuit} hook fired from the disconnect listener. The
+     * audit at {@code /tmp/audit-&#42;/} surfaced this as a torn-read /
+     * lost-update race (put-then-immediately-disappeared sessions) on
+     * concurrent Direct Paste from multiple players.
      */
     private final Map<Long, TransmitSession> transmits = new ConcurrentHashMap<>();
 
-    /**
-     * Map UUID → SliceKey so we can drop sessions on disconnect.
-     * Concurrent for same reason as {@code transmits}.
-     */
+    /** Map UUID → SliceKey so we can drop sessions on disconnect. */
     private final Map<UUID, Long> playerSessions = new ConcurrentHashMap<>();
+
+    /**
+     * Per-player concurrent-paste gate (v0.4.1).
+     *
+     * <p>A single Direct Paste can pin an async worker for seconds (large
+     * schematics) while it walks 100+ chunk dispatches through the throttle.
+     * If the same player fires a second paste before the first completes, we
+     * stack two long-running async loops, double the regionfile pressure on
+     * overlapping chunks, and lose the player's mental model of what's
+     * landing where. Refuse the second paste with a clear message — the
+     * client can retry once the first paste finishes.
+     *
+     * <p>This is a per-player gate, NOT a global one: distinct players can
+     * paste in parallel. The async-scheduler hop (see
+     * {@code PasteOperation.execute()}) means concurrent pastes from
+     * different players never block each other on the dispatch thread.
+     */
+    private final java.util.Set<UUID> activePastes = ConcurrentHashMap.newKeySet();
 
     public DirectPasteHandler(Plugin plugin) {
         this.plugin = plugin;
@@ -222,6 +243,14 @@ public final class DirectPasteHandler {
     }
 
     private void completeAssembly(Player player, TransmitSession session) {
+        UUID uid = player.getUniqueId();
+        if (!activePastes.add(uid)) {
+            LOG.info("[direct-paste] denied concurrent Transmit paste from " + player.getName());
+            try {
+                player.sendMessage("[LitematicaFolia] you already have a paste in flight — wait for it to finish.");
+            } catch (Throwable ignored) {}
+            return;
+        }
         byte[] fileBytes = session.sink.toByteArray();
         try {
             // Servux ships the raw gzipped .litematic file bytes via the
@@ -232,8 +261,12 @@ public final class DirectPasteHandler {
             PasteOptions opts = readOptions(session.placementData, origin);
 
             new PasteOperation(plugin, schem, opts).execute()
-                    .whenComplete((res, err) -> reportComplete(player, res, err));
+                    .whenComplete((res, err) -> {
+                        activePastes.remove(uid);
+                        reportComplete(player, res, err);
+                    });
         } catch (Throwable t) {
+            activePastes.remove(uid);
             LOG.log(Level.WARNING, "Direct Paste assembly failed", t);
             try {
                 player.sendMessage("[LitematicaFolia] direct paste failed: "
@@ -256,67 +289,90 @@ public final class DirectPasteHandler {
      * fields.
      */
     private void handleInlineLitematicaPaste(Player player, LitematicNbt.NbtCompound payload) {
-        LOG.info("[direct-paste] inline LitematicaPaste from " + player.getName()
-                + " (root keys=" + payload.entries().keySet() + ")");
-        // The actual schematic compound (Version/MinecraftDataVersion/Metadata/Regions)
-        // lives under the "Schematics" key — Litematica embeds its full
-        // LitematicaSchematic.toNbt() there. "SubRegions" is just per-region
-        // placement overrides (position/rotation/enabled), not block data.
-        LitematicNbt.NbtCompound schematicsCompound = payload.getCompound("Schematics");
-        if (schematicsCompound == null) {
-            LOG.warning("[direct-paste] LitematicaPaste missing Schematics from " + player.getName());
+        UUID uid = player.getUniqueId();
+        if (!activePastes.add(uid)) {
+            LOG.info("[direct-paste] denied concurrent inline paste from " + player.getName());
+            try {
+                player.sendMessage("[LitematicaFolia] you already have a paste in flight — wait for it to finish.");
+            } catch (Throwable ignored) {}
             return;
         }
-        Location origin = resolveInlineOrigin(payload, player);
-        if (origin == null) {
-            LOG.warning("[direct-paste] LitematicaPaste no usable origin from " + player.getName());
-            return;
-        }
-        Byte ignoreEntities = payload.getByte("IgnoreEntities");
-        boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
+        // Ownership of the activePastes slot is "handed off" to the paste's
+        // whenComplete callback only on the happy path (line tagged below).
+        // Any early-return must release the slot in the finally block.
+        boolean handedOff = false;
+        try {
+            LOG.info("[direct-paste] inline LitematicaPaste from " + player.getName()
+                    + " (root keys=" + payload.entries().keySet() + ")");
+            // The actual schematic compound (Version/MinecraftDataVersion/Metadata/Regions)
+            // lives under the "Schematics" key — Litematica embeds its full
+            // LitematicaSchematic.toNbt() there. "SubRegions" is just per-region
+            // placement overrides (position/rotation/enabled), not block data.
+            LitematicNbt.NbtCompound schematicsCompound = payload.getCompound("Schematics");
+            if (schematicsCompound == null) {
+                LOG.warning("[direct-paste] LitematicaPaste missing Schematics from " + player.getName());
+                return;
+            }
+            Location origin = resolveInlineOrigin(payload, player);
+            if (origin == null) {
+                LOG.warning("[direct-paste] LitematicaPaste no usable origin from " + player.getName());
+                return;
+            }
+            Byte ignoreEntities = payload.getByte("IgnoreEntities");
+            boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
 
-        // Map Litematica's Rotation enum string → yaw integer.
-        // NONE=0, CLOCKWISE_90=90, CLOCKWISE_180=180, COUNTERCLOCKWISE_90=270.
-        int yaw = 0;
-        String rot = payload.getString("Rotation");
-        if (rot != null) {
-            switch (rot) {
-                case "CLOCKWISE_90"       -> yaw = 90;
-                case "CLOCKWISE_180"      -> yaw = 180;
-                case "COUNTERCLOCKWISE_90"-> yaw = 270;
-                default                   -> yaw = 0;
+            // Map Litematica's Rotation enum string → yaw integer.
+            // NONE=0, CLOCKWISE_90=90, CLOCKWISE_180=180, COUNTERCLOCKWISE_90=270.
+            int yaw = 0;
+            String rot = payload.getString("Rotation");
+            if (rot != null) {
+                switch (rot) {
+                    case "CLOCKWISE_90"       -> yaw = 90;
+                    case "CLOCKWISE_180"      -> yaw = 180;
+                    case "COUNTERCLOCKWISE_90"-> yaw = 270;
+                    default                   -> yaw = 0;
+                }
+            }
+
+            LitematicSchematic schem;
+            try {
+                schem = LitematicReader.fromCompound(schematicsCompound);
+            } catch (Throwable t) {
+                LOG.log(Level.WARNING, "[direct-paste] LitematicaPaste fromCompound failed for "
+                        + player.getName() + " — Schematics keys="
+                        + schematicsCompound.entries().keySet(), t);
+                player.sendMessage("[LitematicaFolia] direct paste decode failed: "
+                        + t.getClass().getSimpleName() + " — " + t.getMessage());
+                return;
+            }
+
+            PasteOptions defaults = PasteOptions.defaults(origin);
+            PasteOptions opts = new PasteOptions(
+                    origin,
+                    placeEntities,
+                    defaults.placeTileEntities(),
+                    defaults.placePendingTicks(),
+                    defaults.deferredPhysics(),
+                    defaults.observersLast(),
+                    defaults.maxBlocksPerChunkTask(),
+                    yaw,
+                    null);
+
+            player.sendMessage("[LitematicaFolia] Direct Paste via Servux — placing "
+                    + schem.regions.size() + " region(s) at "
+                    + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ() + "…");
+            // Ownership handoff: slot is now released by whenComplete.
+            handedOff = true;
+            new PasteOperation(plugin, schem, opts).execute()
+                    .whenComplete((res, err) -> {
+                        activePastes.remove(uid);
+                        reportComplete(player, res, err);
+                    });
+        } finally {
+            if (!handedOff) {
+                activePastes.remove(uid);
             }
         }
-
-        LitematicSchematic schem;
-        try {
-            schem = LitematicReader.fromCompound(schematicsCompound);
-        } catch (Throwable t) {
-            LOG.log(Level.WARNING, "[direct-paste] LitematicaPaste fromCompound failed for "
-                    + player.getName() + " — Schematics keys="
-                    + schematicsCompound.entries().keySet(), t);
-            player.sendMessage("[LitematicaFolia] direct paste decode failed: "
-                    + t.getClass().getSimpleName() + " — " + t.getMessage());
-            return;
-        }
-
-        PasteOptions defaults = PasteOptions.defaults(origin);
-        PasteOptions opts = new PasteOptions(
-                origin,
-                placeEntities,
-                defaults.placeTileEntities(),
-                defaults.placePendingTicks(),
-                defaults.deferredPhysics(),
-                defaults.observersLast(),
-                defaults.maxBlocksPerChunkTask(),
-                yaw,
-                null);
-
-        player.sendMessage("[LitematicaFolia] Direct Paste via Servux — placing "
-                + schem.regions.size() + " region(s) at "
-                + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ() + "…");
-        new PasteOperation(plugin, schem, opts).execute()
-                .whenComplete((res, err) -> reportComplete(player, res, err));
     }
 
     private Location resolveInlineOrigin(LitematicNbt.NbtCompound payload, Player player) {

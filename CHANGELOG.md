@@ -2,6 +2,23 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.4.1+26.1.2 — 2026-05-28
+
+### Fixed — region tick-thread deadlock during Direct Paste
+
+- **`PasteOperation.execute()` no longer blocks on a region tick thread.** The v0.4.0 chunk-dispatch throttle (`Semaphore CHUNK_THROTTLE`, 32 permits) acquires permits synchronously in the dispatch loop. When `execute()` was invoked straight from the Servux plugin-message handler (i.e. on the player's region tick thread), and any dispatched chunk task targeted that same region, the runnable's `release()` could never fire — the tick thread was parked in `Semaphore.acquire()`. After 60 s Folia's Watchdog killed the region; the container restarted. Reproduced on creaclone 2026-05-28: ExoRamC pasted in `world_nether [1087, -236]` → 200+ s region freeze → docker exit. Fix: `execute()` is now a thin wrapper that hops the entire dispatch pipeline to `Bukkit.getAsyncScheduler().runNow(...)` before any `acquire()` runs. Per-chunk `runOnRegion(...)` dispatches still target the correct region thread; only the throttle loop moves off-tick.
+- **Per-player concurrent-paste gate** in `DirectPasteHandler`. A single Direct Paste can pin an async worker for several seconds; stacking two from the same player doubled regionfile pressure on overlapping chunks. Both `completeAssembly` (Transmit-protocol path) and `handleInlineLitematicaPaste` (maruohon inline path) now refuse a second paste from the same player until the first one completes, with a clear chat message. Distinct players still paste in parallel.
+
+### Operational notes
+
+- No schema or config changes vs 0.4.0 — straight in-place drop-in.
+- Recommended `paper-global.yml` watchdog tuning for early signals (applied on creaclone + plot in mc-stack 2026-05-28):
+  ```yaml
+  watchdog:
+    early-warning-every: 5000
+    early-warning-delay: 10000
+  ```
+
 ## 0.3.0+26.1.2 — 2026-05-25
 
 ### Added — Direct Paste end-to-end via Servux

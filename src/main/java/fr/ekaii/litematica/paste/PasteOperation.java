@@ -63,18 +63,38 @@ public final class PasteOperation {
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/PasteOperation");
 
     /**
-     * Throttle for concurrent in-flight chunk tasks across ALL paste operations.
-     * Without this, a 397K-block paste fires 100+ {@code runOnRegion} tasks in
-     * &lt;1ms, which inflates Paper's chunk save queue and triggers regionfile
-     * header races. Axiom uses {@code MAX_CHUNK_FUTURES = 256}; we cap lower
-     * (32) since LitematicaFolia is invoked manually (not on every set_block
-     * packet) and the lower bound massively reduces dirty-chunk pressure.
+     * In-flight chunk-task throttle (v0.4.0).
      *
-     * Semaphore acquire blocks the dispatch loop, providing back-pressure. The
-     * actual chunk write still runs on the owning region thread.
+     * <p>Folia's RegionScheduler accepts an unbounded queue of region-bound
+     * runnables. A large paste (100+ chunks, observed on creaclone 2026-05-25)
+     * previously fired every {@link FoliaCompat#runOnRegion} call inside a
+     * tight loop in &lt;1 ms with zero throttle — each chunk's owning region
+     * then had to drain its queue while Paper's I/O Worker pool tried to flush
+     * region files in parallel. Combined with markUnsaved storms, this
+     * cascaded into the region-file corruption events tracked in the audit at
+     * {@code /tmp/audit-&#42;/}.
+     *
+     * <p>This semaphore caps the number of chunk tasks that have been
+     * dispatched but not yet run (or are currently running) at any moment.
+     * It is acquired synchronously in {@link #execute()} before each
+     * {@code runOnRegion} call — when 32 tasks are already in flight, the
+     * dispatching thread blocks until one completes. This mirrors the
+     * {@code MAX_CHUNK_FUTURES = 256} cap used by Axiom's
+     * {@code SetBlockBufferOperation}, scaled down because Litematica pastes
+     * are typically smaller per-chunk than an Axiom buffer paste.
+     *
+     * <p>The permit is released either:
+     * <ul>
+     *   <li>Inside the runnable's {@code finally} block (normal path), OR</li>
+     *   <li>Via {@link CompletableFuture#whenComplete} on the future returned
+     *       by {@link FoliaCompat#runOnRegion} (covers the path where the
+     *       scheduler itself throws and the lambda never runs).</li>
+     * </ul>
+     * Both paths use {@code tryAcquire}-style accounting via
+     * {@link #acquireSlot()} / {@link #releaseSlot} so a release that fires
+     * twice is a no-op.
      */
-    private static final int CHUNK_THROTTLE_PERMITS = 32;
-    private static final Semaphore CHUNK_THROTTLE = new Semaphore(CHUNK_THROTTLE_PERMITS);
+    private static final Semaphore CHUNK_THROTTLE = new Semaphore(32, true);
 
     /** Blocks whose physics behaviour requires "observers-last" placement. */
     public static final Set<String> ACTIVE_BLOCK_NAMES = Set.of(
@@ -140,8 +160,47 @@ public final class PasteOperation {
      * Kicks off the paste. The returned future completes when every
      * per-chunk task has finished. Errors collected along the way are
      * delivered in {@link PasteResult#errors()}.
+     *
+     * <p><strong>Threading contract (v0.4.1 fix for creaclone 2026-05-28 freeze).</strong>
+     * The dispatch loop calls {@link #acquireSlot()} synchronously on its
+     * calling thread before each {@link FoliaCompat#runOnRegion} call. If
+     * invoked on a Folia region tick thread (e.g. straight from a
+     * plugin-message handler), and any dispatched chunk task targets the
+     * SAME region, that task can never run — the tick thread is parked in
+     * {@code Semaphore.acquire()}, the runnable's {@code release()} never
+     * fires, and the Folia Watchdog kills the region after 60 s. Real
+     * incident: ExoRamC pasted in {@code world_nether [1087,-236]} from a
+     * region tick thread; 200+ s freeze; container restart.
+     *
+     * <p>Fix: every call to {@code execute()} is hopped to
+     * {@link org.bukkit.scheduler.BukkitScheduler}'s async pool via
+     * {@link org.bukkit.Server#getAsyncScheduler()} before the dispatch loop
+     * runs. Async-pool threads can block on the throttle without affecting
+     * any region's tick rate, and the per-chunk {@code runOnRegion}
+     * dispatches still queue onto the correct region thread.
      */
     public CompletableFuture<PasteResult> execute() {
+        CompletableFuture<PasteResult> proxy = new CompletableFuture<>();
+        Bukkit.getAsyncScheduler().runNow(plugin, scheduledTask -> {
+            try {
+                executeInternal().whenComplete((res, err) -> {
+                    if (err != null) proxy.completeExceptionally(err);
+                    else proxy.complete(res);
+                });
+            } catch (Throwable t) {
+                proxy.completeExceptionally(t);
+            }
+        });
+        return proxy;
+    }
+
+    /**
+     * The actual paste pipeline. <strong>Never call this directly</strong> —
+     * always go through {@link #execute()} so the dispatch loop runs on an
+     * async worker, never on a region tick thread. See {@link #execute()}
+     * javadoc for the deadlock this prevents.
+     */
+    private CompletableFuture<PasteResult> executeInternal() {
         long startNs = System.nanoTime();
 
         World world = options.origin().getWorld();
@@ -179,30 +238,37 @@ public final class PasteOperation {
         }
 
         // ----------------------------------------------- pass 1 dispatch
+        // Throttled per-chunk dispatch — acquireSlot blocks if 32 tasks are
+        // already in flight. See CHUNK_THROTTLE javadoc for rationale.
         List<CompletableFuture<Void>> pass1Futures = new ArrayList<>(pass1.size());
         for (var entry : pass1.entrySet()) {
             ChunkKey key = entry.getKey();
             List<PendingWrite> writes = entry.getValue();
             List<PendingTileEntity> tes = teByChunk.getOrDefault(key, Collections.emptyList());
-            // Pass 1 places blocks + TileEntities; entities & ticks are run in pass 2.
-            // Throttle: back-pressure on dispatch loop so no more than
-            // CHUNK_THROTTLE_PERMITS chunks are in flight at once (prevents
-            // regionfile-header races under heavy paste load).
+            acquireSlot();
+            AtomicBoolean releasedOnce = new AtomicBoolean(false);
+            CompletableFuture<Void> f;
             try {
-                CHUNK_THROTTLE.acquire();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                errors.add("paste interrupted during throttle acquire (pass1)");
-                break;
+                // Pass 1 places blocks + TileEntities; entities & ticks are run in pass 2.
+                f = FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
+                    try {
+                        applyChunkBlocks(world, writes, blocksPlaced, errors);
+                        applyChunkTileEntities(tes, tilesPlaced, errors);
+                    } finally {
+                        releaseSlot(releasedOnce);
+                    }
+                });
+            } catch (Throwable t) {
+                releaseSlot(releasedOnce);
+                errors.add("dispatch pass1 chunk (" + key.cx + "," + key.cz + "): "
+                        + t.getClass().getSimpleName() + " " + t.getMessage());
+                continue;
             }
-            pass1Futures.add(FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
-                try {
-                    applyChunkBlocks(world, writes, blocksPlaced, errors);
-                    applyChunkTileEntities(tes, tilesPlaced, errors);
-                } finally {
-                    CHUNK_THROTTLE.release();
-                }
-            }));
+            // Safety net: if the scheduler rejected the runnable and the lambda
+            // never ran, runOnRegion's internal catch completes the future
+            // exceptionally without invoking the lambda → finally never fires.
+            f.whenComplete((v, t) -> releaseSlot(releasedOnce));
+            pass1Futures.add(f);
         }
 
         CompletableFuture<Void> pass1All = CompletableFuture.allOf(
@@ -224,36 +290,40 @@ public final class PasteOperation {
                 List<PendingEntity>    ents    = entitiesByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      bticks  = blockTicksByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      fticks  = fluidTicksByChunk.getOrDefault(key, Collections.emptyList());
-                // Throttle pass-2 dispatch the same way as pass-1.
+                acquireSlot();
+                AtomicBoolean releasedOnce = new AtomicBoolean(false);
+                CompletableFuture<Void> f;
                 try {
-                    CHUNK_THROTTLE.acquire();
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    errors.add("paste interrupted during throttle acquire (pass2)");
-                    break;
+                    f = FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
+                        try {
+                            if (!writes.isEmpty()) {
+                                applyChunkBlocks(world, writes, blocksPlaced, errors);
+                            }
+                            if (options.placeEntities() && !ents.isEmpty()) {
+                                applyChunkEntities(world, ents, entitiesSpawned, errors);
+                            }
+                            if (options.placePendingTicks()) {
+                                for (PendingTick t : bticks) {
+                                    try { nms.scheduleBlockTick(world, t.x, t.y, t.z, t.nbt); }
+                                    catch (Throwable ex) { errors.add("blockTick: " + ex.getMessage()); }
+                                }
+                                for (PendingTick t : fticks) {
+                                    try { nms.scheduleFluidTick(world, t.x, t.y, t.z, t.nbt); }
+                                    catch (Throwable ex) { errors.add("fluidTick: " + ex.getMessage()); }
+                                }
+                            }
+                        } finally {
+                            releaseSlot(releasedOnce);
+                        }
+                    });
+                } catch (Throwable t) {
+                    releaseSlot(releasedOnce);
+                    errors.add("dispatch pass2 chunk (" + key.cx + "," + key.cz + "): "
+                            + t.getClass().getSimpleName() + " " + t.getMessage());
+                    continue;
                 }
-                p2.add(FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
-                    try {
-                        if (!writes.isEmpty()) {
-                            applyChunkBlocks(world, writes, blocksPlaced, errors);
-                        }
-                        if (options.placeEntities() && !ents.isEmpty()) {
-                            applyChunkEntities(world, ents, entitiesSpawned, errors);
-                        }
-                        if (options.placePendingTicks()) {
-                            for (PendingTick t : bticks) {
-                                try { nms.scheduleBlockTick(world, t.x, t.y, t.z, t.nbt); }
-                                catch (Throwable ex) { errors.add("blockTick: " + ex.getMessage()); }
-                            }
-                            for (PendingTick t : fticks) {
-                                try { nms.scheduleFluidTick(world, t.x, t.y, t.z, t.nbt); }
-                                catch (Throwable ex) { errors.add("fluidTick: " + ex.getMessage()); }
-                            }
-                        }
-                    } finally {
-                        CHUNK_THROTTLE.release();
-                    }
-                }));
+                f.whenComplete((v, t) -> releaseSlot(releasedOnce));
+                p2.add(f);
             }
             return CompletableFuture.allOf(p2.toArray(new CompletableFuture[0]));
         });
@@ -269,46 +339,49 @@ public final class PasteOperation {
             List<CompletableFuture<Void>> sweeps = new ArrayList<>();
             int minCX = bbox.minX >> 4, maxCX = bbox.maxX >> 4;
             int minCZ = bbox.minZ >> 4, maxCZ = bbox.maxZ >> 4;
-            outer:
             for (int cx = minCX; cx <= maxCX; cx++) {
                 for (int cz = minCZ; cz <= maxCZ; cz++) {
                     int fcx = cx, fcz = cz;
-                    // Throttle deferred-physics sweep dispatch.
+                    acquireSlot();
+                    AtomicBoolean releasedOnce = new AtomicBoolean(false);
+                    CompletableFuture<Void> f;
                     try {
-                        CHUNK_THROTTLE.acquire();
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        errors.add("paste interrupted during throttle acquire (sweep)");
-                        break outer;
-                    }
-                    sweeps.add(FoliaCompat.runOnRegion(plugin, world, fcx, fcz, () -> {
-                        try {
-                            int xMin = Math.max(bbox.minX, fcx << 4);
-                            int xMax = Math.min(bbox.maxX, (fcx << 4) + 15);
-                            int zMin = Math.max(bbox.minZ, fcz << 4);
-                            int zMax = Math.min(bbox.maxZ, (fcz << 4) + 15);
-                            for (int x = xMin; x <= xMax; x++) {
-                                for (int z = zMin; z <= zMax; z++) {
-                                    for (int y = bbox.minY; y <= bbox.maxY; y++) {
-                                        Block b = world.getBlockAt(x, y, z);
-                                        try {
-                                            b.getState().update(true, true);
-                                        } catch (Throwable t) {
-                                            if (!FoliaThreadException.isFoliaThreadException(t)) {
-                                                errors.add("physics-sweep (" + x + "," + y + "," + z + "): " + t.getMessage());
+                        f = FoliaCompat.runOnRegion(plugin, world, fcx, fcz, () -> {
+                            try {
+                                int xMin = Math.max(bbox.minX, fcx << 4);
+                                int xMax = Math.min(bbox.maxX, (fcx << 4) + 15);
+                                int zMin = Math.max(bbox.minZ, fcz << 4);
+                                int zMax = Math.min(bbox.maxZ, (fcz << 4) + 15);
+                                for (int x = xMin; x <= xMax; x++) {
+                                    for (int z = zMin; z <= zMax; z++) {
+                                        for (int y = bbox.minY; y <= bbox.maxY; y++) {
+                                            Block b = world.getBlockAt(x, y, z);
+                                            try {
+                                                b.getState().update(true, true);
+                                            } catch (Throwable t) {
+                                                if (!FoliaThreadException.isFoliaThreadException(t)) {
+                                                    errors.add("physics-sweep (" + x + "," + y + "," + z + "): " + t.getMessage());
+                                                }
                                             }
                                         }
                                     }
                                 }
+                            } catch (Throwable t) {
+                                if (!FoliaThreadException.isFoliaThreadException(t)) {
+                                    errors.add("physics-sweep chunk (" + fcx + "," + fcz + "): " + t.getMessage());
+                                }
+                            } finally {
+                                releaseSlot(releasedOnce);
                             }
-                        } catch (Throwable t) {
-                            if (!FoliaThreadException.isFoliaThreadException(t)) {
-                                errors.add("physics-sweep chunk (" + fcx + "," + fcz + "): " + t.getMessage());
-                            }
-                        } finally {
-                            CHUNK_THROTTLE.release();
-                        }
-                    }));
+                        });
+                    } catch (Throwable t) {
+                        releaseSlot(releasedOnce);
+                        errors.add("dispatch sweep chunk (" + fcx + "," + fcz + "): "
+                                + t.getClass().getSimpleName() + " " + t.getMessage());
+                        continue;
+                    }
+                    f.whenComplete((v, t) -> releaseSlot(releasedOnce));
+                    sweeps.add(f);
                 }
             }
             return CompletableFuture.allOf(sweeps.toArray(new CompletableFuture[0]));
@@ -544,6 +617,36 @@ public final class PasteOperation {
     }
 
     // ------------------------------------------------------------- utilities
+
+    /**
+     * Acquires a chunk-dispatch slot from {@link #CHUNK_THROTTLE}. Blocks the
+     * dispatching thread until a permit is available. If interrupted, restores
+     * the interrupt flag and returns without holding a permit; callers should
+     * still pair this with a {@link #releaseSlot} via a guarded
+     * {@link AtomicBoolean} so an erroneous release is a no-op.
+     */
+    private static void acquireSlot() {
+        try {
+            CHUNK_THROTTLE.acquire();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Releases the chunk-dispatch slot exactly once. {@code releasedOnce} is
+     * the per-dispatch guard — the throttle is released the first time this
+     * method is called with a given {@code AtomicBoolean}, and is a no-op on
+     * subsequent calls. Necessary because both the lambda's {@code finally}
+     * and the future's {@code whenComplete} could legitimately fire for the
+     * same dispatch (e.g. scheduler runs the task AND the future completes
+     * normally — both want to release).
+     */
+    private static void releaseSlot(AtomicBoolean releasedOnce) {
+        if (releasedOnce.compareAndSet(false, true)) {
+            CHUNK_THROTTLE.release();
+        }
+    }
 
     private void reportProgress(String message) {
         var progress = options.progress();
