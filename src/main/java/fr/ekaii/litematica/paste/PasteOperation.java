@@ -93,8 +93,27 @@ public final class PasteOperation {
      * Both paths use {@code tryAcquire}-style accounting via
      * {@link #acquireSlot()} / {@link #releaseSlot} so a release that fires
      * twice is a no-op.
+     *
+     * <p><strong>v0.4.2 hardening.</strong> {@link #acquireSlot()} now waits at
+     * most {@link #ACQUIRE_TIMEOUT_MS} and then proceeds unthrottled, so a lost
+     * permit can degrade the throttle but can never park a dispatch thread
+     * <em>indefinitely</em> — the exact "Semaphore never released → thread
+     * blocked forever" failure reported for creaclone (Folia issue #1). Paired
+     * with the off-region continuation dispatch (see {@link #offRegionExecutor}),
+     * this closes the region-thread self-deadlock for good.
      */
     private static final Semaphore CHUNK_THROTTLE = new Semaphore(32, true);
+
+    /**
+     * Upper bound on how long a dispatch thread waits for a throttle permit
+     * before giving up and proceeding <em>without</em> one. A single chunk task
+     * completes in well under a second, so a multi-second wait only happens
+     * under extreme in-flight pressure or an actual permit leak. In either case
+     * dispatching one chunk unthrottled is strictly safer than blocking a
+     * thread forever (the creaclone freeze). Deliberately generous so it never
+     * fires during normal operation.
+     */
+    private static final long ACQUIRE_TIMEOUT_MS = 60_000L;
 
     /** Blocks whose physics behaviour requires "observers-last" placement. */
     public static final Set<String> ACTIVE_BLOCK_NAMES = Set.of(
@@ -110,6 +129,21 @@ public final class PasteOperation {
     private final LitematicSchematic schematic;
     private final PasteOptions options;
     private final NmsBridge nms;
+
+    /**
+     * Off-region executor for the pass-2 and physics-sweep dispatch loops
+     * (v0.4.2 fix for creaclone 2026-06-04..11 freeze).
+     *
+     * <p>Those loops call the <em>blocking</em> {@link #acquireSlot()} and MUST
+     * NOT run on a Folia region tick thread — see the {@link #execute()}
+     * javadoc. A plain {@code thenCompose} continuation runs on whatever thread
+     * completed the upstream future, which for {@link FoliaCompat#runOnRegion}
+     * is a region tick thread. Routing those continuations through this
+     * executor (Folia async pool / Paper async worker) keeps every
+     * {@code acquireSlot} call off-region, so blocking on the throttle can
+     * never park a region and trip the Folia Watchdog.
+     */
+    private final java.util.concurrent.Executor offRegionExecutor;
 
     /**
      * Cooperative cancellation flag. Per-chunk tasks check this between writes
@@ -131,6 +165,7 @@ public final class PasteOperation {
         this.schematic = schematic;
         this.options = options;
         this.nms = NmsBridge.get();
+        this.offRegionExecutor = command -> FoliaCompat.runAsync(plugin, command);
     }
 
     /**
@@ -172,12 +207,27 @@ public final class PasteOperation {
      * incident: ExoRamC pasted in {@code world_nether [1087,-236]} from a
      * region tick thread; 200+ s freeze; container restart.
      *
-     * <p>Fix: every call to {@code execute()} is hopped to
+     * <p>Fix (v0.4.1): every call to {@code execute()} is hopped to
      * {@link org.bukkit.scheduler.BukkitScheduler}'s async pool via
      * {@link org.bukkit.Server#getAsyncScheduler()} before the dispatch loop
      * runs. Async-pool threads can block on the throttle without affecting
      * any region's tick rate, and the per-chunk {@code runOnRegion}
      * dispatches still queue onto the correct region thread.
+     *
+     * <p><strong>v0.4.2 completes the fix.</strong> The v0.4.1 hop only covered
+     * the pass-1 loop. The pass-2 and physics-sweep loops were chained with a
+     * plain {@code thenCompose}, which runs its body on the thread that
+     * completed the upstream future — a Folia region tick thread (the last
+     * per-chunk task to finish completes it inside {@code runOnRegion}). Those
+     * loops then called the blocking {@link #acquireSlot()} <em>on a region
+     * thread</em>; when that same region still had more pending chunk tasks
+     * than free permits, the region parked in {@code Semaphore.acquire()}
+     * waiting for permits only it could free by running its own queued tasks →
+     * self-deadlock. Real incident: creaclone regions stuck up to 116h
+     * (Folia issue #1), stack pinned at {@code PasteOperation.java:293}
+     * (pass 2) and {@code :345} (sweep). Fix: both continuations now hop off
+     * the region via {@link #offRegionExecutor} ({@code thenComposeAsync}), so
+     * every {@code acquireSlot} runs on an async worker.
      */
     public CompletableFuture<PasteResult> execute() {
         CompletableFuture<PasteResult> proxy = new CompletableFuture<>();
@@ -245,8 +295,8 @@ public final class PasteOperation {
             ChunkKey key = entry.getKey();
             List<PendingWrite> writes = entry.getValue();
             List<PendingTileEntity> tes = teByChunk.getOrDefault(key, Collections.emptyList());
-            acquireSlot();
-            AtomicBoolean releasedOnce = new AtomicBoolean(false);
+            boolean acquired = acquireSlot();
+            AtomicBoolean releasedOnce = new AtomicBoolean(!acquired);
             CompletableFuture<Void> f;
             try {
                 // Pass 1 places blocks + TileEntities; entities & ticks are run in pass 2.
@@ -275,7 +325,10 @@ public final class PasteOperation {
                 pass1Futures.toArray(new CompletableFuture[0]));
 
         // ----------------------------------------------- pass 2 + entities + ticks
-        CompletableFuture<Void> pass2All = pass1All.thenCompose(ignored -> {
+        // thenComposeAsync(..., offRegionExecutor): this loop calls the blocking
+        // acquireSlot() and must run on an async worker, never the region tick
+        // thread that completed pass1All. See execute() javadoc (Folia issue #1).
+        CompletableFuture<Void> pass2All = pass1All.thenComposeAsync(ignored -> {
             List<CompletableFuture<Void>> p2 = new ArrayList<>();
 
             // Union of all chunks that need pass-2 work.
@@ -290,8 +343,8 @@ public final class PasteOperation {
                 List<PendingEntity>    ents    = entitiesByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      bticks  = blockTicksByChunk.getOrDefault(key, Collections.emptyList());
                 List<PendingTick>      fticks  = fluidTicksByChunk.getOrDefault(key, Collections.emptyList());
-                acquireSlot();
-                AtomicBoolean releasedOnce = new AtomicBoolean(false);
+                boolean acquired = acquireSlot();
+                AtomicBoolean releasedOnce = new AtomicBoolean(!acquired);
                 CompletableFuture<Void> f;
                 try {
                     f = FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
@@ -326,10 +379,12 @@ public final class PasteOperation {
                 p2.add(f);
             }
             return CompletableFuture.allOf(p2.toArray(new CompletableFuture[0]));
-        });
+        }, offRegionExecutor);
 
         // --------------------------------------------- deferred physics sweep
-        CompletableFuture<Void> finalPhase = pass2All.thenCompose(ignored -> {
+        // Same off-region requirement as pass 2 — this loop blocks in
+        // acquireSlot() and was the :345 self-deadlock site in Folia issue #1.
+        CompletableFuture<Void> finalPhase = pass2All.thenComposeAsync(ignored -> {
             if (!options.deferredPhysics() || bbox.empty) {
                 return CompletableFuture.completedFuture(null);
             }
@@ -342,8 +397,8 @@ public final class PasteOperation {
             for (int cx = minCX; cx <= maxCX; cx++) {
                 for (int cz = minCZ; cz <= maxCZ; cz++) {
                     int fcx = cx, fcz = cz;
-                    acquireSlot();
-                    AtomicBoolean releasedOnce = new AtomicBoolean(false);
+                    boolean acquired = acquireSlot();
+                    AtomicBoolean releasedOnce = new AtomicBoolean(!acquired);
                     CompletableFuture<Void> f;
                     try {
                         f = FoliaCompat.runOnRegion(plugin, world, fcx, fcz, () -> {
@@ -385,7 +440,7 @@ public final class PasteOperation {
                 }
             }
             return CompletableFuture.allOf(sweeps.toArray(new CompletableFuture[0]));
-        });
+        }, offRegionExecutor);
 
         return finalPhase.thenApply(ignored -> {
             long ms = (System.nanoTime() - startNs) / 1_000_000L;
@@ -619,17 +674,33 @@ public final class PasteOperation {
     // ------------------------------------------------------------- utilities
 
     /**
-     * Acquires a chunk-dispatch slot from {@link #CHUNK_THROTTLE}. Blocks the
-     * dispatching thread until a permit is available. If interrupted, restores
-     * the interrupt flag and returns without holding a permit; callers should
-     * still pair this with a {@link #releaseSlot} via a guarded
-     * {@link AtomicBoolean} so an erroneous release is a no-op.
+     * Tries to acquire a chunk-dispatch slot from {@link #CHUNK_THROTTLE},
+     * waiting at most {@link #ACQUIRE_TIMEOUT_MS}.
+     *
+     * @return {@code true} if a permit is now held — the caller MUST pair it
+     *         with exactly one {@link #releaseSlot}; {@code false} if the wait
+     *         timed out or the thread was interrupted, in which case the caller
+     *         holds no permit and must NOT release one (seed its
+     *         {@code releasedOnce} guard with {@code true}).
+     *
+     * <p>Never blocks indefinitely: a timeout proceeds unthrottled rather than
+     * parking the thread, which is what previously froze creaclone regions when
+     * a permit leaked (Folia issue #1). Under normal load a permit is always
+     * available within microseconds, so the timeout path is a safety valve, not
+     * a hot path.
      */
-    private static void acquireSlot() {
+    private static boolean acquireSlot() {
         try {
-            CHUNK_THROTTLE.acquire();
+            boolean ok = CHUNK_THROTTLE.tryAcquire(ACQUIRE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (!ok) {
+                LOG.warning("CHUNK_THROTTLE permit wait timed out after " + ACQUIRE_TIMEOUT_MS
+                        + "ms — dispatching this chunk unthrottled (extreme load or a leaked permit); "
+                        + "server stays live rather than parking a thread");
+            }
+            return ok;
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            return false;
         }
     }
 

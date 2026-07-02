@@ -2,6 +2,20 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.4.2+26.1.2 — 2026-07-02
+
+### Fixed — PasteOperation semaphore deadlock (continuation loops on region threads)
+
+- **The v0.4.1 fix was incomplete.** v0.4.1 hopped only the *pass-1* dispatch loop off the region tick thread. The **pass-2** loop (`pass1All.thenCompose(...)`) and the **deferred-physics sweep** loop (`pass2All.thenCompose(...)`) were chained with a plain (non-async) `thenCompose`, which runs its body **on the thread that completed the upstream future** — and that future is completed by `done.complete(null)` *inside* `FoliaCompat.runOnRegion`, i.e. on a **Folia region tick thread** (whichever chunk task finished last). Those loops then called the *blocking* `PasteOperation.acquireSlot()` on that region thread. When the same region still had more pending chunk tasks than free `CHUNK_THROTTLE` permits, the region parked in `Semaphore.acquire()` waiting for permits only it could release by running its own queued tasks → **self-deadlock**. The region never ticked again; Folia's Watchdog logged `Tick region … has not responded` forever without crashing. Cumulative across regions (Overworld + Nether). Reproduced on **creaclone**: a region stuck **~116 h** before a manual restart (Folia issue #1), stacks pinned at `PasteOperation.java:293` (pass 2) and `:345` (physics sweep).
+- **Fix (two layers):**
+  1. **Off-region continuations.** Both continuation loops now run via `thenComposeAsync(..., offRegionExecutor)`, where `offRegionExecutor` submits to the Folia async pool (Paper async worker on non-Folia). Every `acquireSlot()` call therefore runs on an async worker, never a region tick thread — a blocked dispatch thread can no longer park a region.
+  2. **Bounded acquire.** `acquireSlot()` now uses `tryAcquire(60 s)` instead of an unbounded `acquire()`, returning whether a permit was actually taken. A timeout dispatches the chunk *unthrottled* and logs a warning rather than blocking forever, and the `releasedOnce` guard is seeded so a permit that was never taken is never over-released. This is a hard safety valve: even a leaked permit can only degrade throttling, never freeze a thread indefinitely.
+
+### Operational notes
+
+- No schema or config changes vs 0.4.1 — straight in-place drop-in.
+- Behaviour under normal load is unchanged: permits are available within microseconds, so the timeout path never fires and throttling (32 in-flight chunk tasks) is preserved.
+
 ## 0.4.1+26.1.2 — 2026-05-28
 
 ### Fixed — region tick-thread deadlock during Direct Paste

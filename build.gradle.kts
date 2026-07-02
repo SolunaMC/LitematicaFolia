@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.4.1+26.1.2"
+version = "0.4.2+26.1.2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
