@@ -2,9 +2,11 @@
 
 **Server-side Litematica for Paper and Folia.** Load `.litematic` schematics directly on your Minecraft server, paste them with full block-state, tile-entity and entity fidelity, and accept Direct-Paste uploads from vanilla [Litematica](https://github.com/maruohon/litematica) clients via the [Servux](https://github.com/sakura-ryoko/servux) plugin-message protocol — no `/fill` spam, no kick-for-spamming, no `WorldEdit` dependency.
 
-[![release](https://img.shields.io/badge/release-v0.3.0-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases) [![mc](https://img.shields.io/badge/Minecraft-1.21.11-blue)](https://papermc.io/) [![api](https://img.shields.io/badge/Paper%20API-26.1-blue)](https://papermc.io/) [![folia](https://img.shields.io/badge/Folia-supported-purple)](https://papermc.io/software/folia) [![jdk](https://img.shields.io/badge/JDK-25-orange)](https://openjdk.org/) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#license)
+[![release](https://img.shields.io/badge/release-v0.5.1-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases) [![mc](https://img.shields.io/badge/Minecraft-26.2-blue)](https://papermc.io/) [![api](https://img.shields.io/badge/Paper%20API-26.2-blue)](https://papermc.io/) [![folia](https://img.shields.io/badge/Folia-supported-purple)](https://papermc.io/software/folia) [![jdk](https://img.shields.io/badge/JDK-25-orange)](https://openjdk.org/) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > First Paper/Folia plugin to natively parse and paste `.litematic`. Replaces the legacy Litematica `/setblock` + `/fill` fallback (slow, lossy, kick-prone) with a real server-side pipeline.
+
+**What's new in 0.5.1** — Direct Paste now works reliably on Leaves-lineage 26.2 servers (Lophine, Leaves, …): these servers ship their own in-core Servux protocol handling that used to swallow the plugin's `servux:*` channels, leaving client uploads hanging forever. The plugin now reclaims its channels automatically at startup — no config change needed, and a clean no-op on plain Paper/Folia/Luminol.
 
 ---
 
@@ -58,9 +60,11 @@ For players to paste directly from their own client (no admin upload), they need
 | Mod | Version | Source |
 |---|---|---|
 | Fabric Loader | 0.16.x+ | [fabricmc.net](https://fabricmc.net) |
-| Fabric API | latest for 1.21.11 | [Modrinth](https://modrinth.com/mod/fabric-api) |
-| MaLiLib | 0.28.6+ | [Modrinth](https://modrinth.com/mod/malilib) |
-| **Litematica** | **0.27.6** (1.21.11) | [Modrinth](https://modrinth.com/mod/litematica) |
+| Fabric API | latest for your MC version | [Modrinth](https://modrinth.com/mod/fabric-api) |
+| MaLiLib | latest for your MC version | [Modrinth](https://modrinth.com/mod/malilib) |
+| **Litematica** | latest for your MC version | [Modrinth](https://modrinth.com/mod/litematica) |
+
+Validated end-to-end with Litematica 0.27.6 + MaLiLib 0.28.6 (26.1-era clients); the Servux wire format is re-verified unchanged on 26.2 (upstream `26.2-0.11.1`).
 
 ### Critical client config (the one nobody documents)
 
@@ -99,9 +103,15 @@ Leaves-based servers (including **Lophine**, the Luminol downstream) implement
 the Servux protocol **in the server core** and consume every `servux:*`
 custom-payload before Bukkit plugins can see it — even with the
 `[function.protocol.servux]` toggles off in `lophine_global_config.toml`.
-On those servers this plugin's Servux bridge (Direct Paste, bulk requests)
-is dead on arrival: use the server's native Servux support instead.
-Commands (`/litematica paste|save|…`) work everywhere.
+Symptom (through 0.5.0): Litematica clients hang on *"The placement is being
+uploaded to Servux for pasting"* with zero server-side logs.
+
+**Fixed in 0.5.1**: when the Servux bridge is enabled, the plugin reclaims its
+`servux:litematics` / `servux:structures` channels from the Leaves protocol
+core at startup, so Direct Paste and bulk requests reach the plugin as they do
+on plain Paper/Folia. On non-Leaves servers this is a clean no-op; if the
+reclaim ever fails, the plugin logs a SEVERE line telling you so instead of
+failing silently.
 
 ## Server admin — Velocity proxy tuning
 
@@ -136,7 +146,7 @@ Or tell players to re-save the schematic in their current MC version (Litematica
 | Command | Permission (default) | Description |
 |---|---|---|
 | `/litematica paste <file> [x y z] [yaw] [--no-entities] [--no-physics] [--no-tile-entities] [--no-pending-ticks]` | `litematica.paste` (op) | Paste a `.litematic` from the schematics dir |
-| `/litematica save <name> <x1 y1 z1> <x2 y2 z2>` | `litematica.save` (op) | Export a region back to `.litematic` (blocks only in v0.3.0) |
+| `/litematica save <name> <x1 y1 z1> <x2 y2 z2>` | `litematica.save` (op) | Export a region back to `.litematic` (blocks only for now, origin-normalized) |
 | `/litematica materials <file>` | `litematica.materials` (op) | Material list of a schematic |
 | `/litematica list [--filter <glob>]` | `litematica.use` (op) | List schematics in the dir |
 | `/litematica info <file>` | `litematica.use` (op) | Header info + region stats |
@@ -168,10 +178,10 @@ protocol:
 
 ## Limitations and known issues
 
-- **`/litematica save` is blocks-only in v0.3.0.** The TileEntity / Entity / PendingTick capture path is wired but the per-chunk `getBlockState` returns stale snapshots after PasteOperation writes via NMS section setters. Workaround: use Litematica's Save Area on the client.
+- **`/litematica save` is blocks-only for now.** Saved regions are origin-normalized since 0.5.0 (re-pasting a saved file lands exactly at the coordinates you give it), and the paste/save coordinate contract is guarded by a round-trip smoke test — but TileEntity / Entity / PendingTick capture on save is still on the roadmap. Workaround: use Litematica's Save Area on the client.
 - **Direct Paste size cap = client-side limited.** Litematica's `sliceForServux` threshold is 64 MiB NBT; above that it uses a multi-frame Transmit protocol (our handler supports it, untested at scale).
-- **Easy Place V3 is gated off.** Server-side block-state override on `UseItemOn` packets requires PacketEvents 2.7+ which fails to parse Luminol's `*.local-SNAPSHOT` version string. Code is there, enable at your own risk.
-- **FAWE ClipboardFormat adapter is stubbed.** The `mvn.intellectualsites.com` repo was NXDOMAIN at the time of v0.3.0 build. Will be re-enabled in v0.4.
+- **Easy Place V3 is gated off by default.** The bundled PacketEvents is now 2.13.0 (parses 26.2-era server version strings), but the server-side block-state override path has not been exercised at scale. Code is there — `protocol.enableEasyPlace: true` at your own risk.
+- **FAWE ClipboardFormat adapter is stubbed.** The FAWE Maven repository (`mvn.intellectualsites.com`) has been unreachable across releases; the adapter will return when the upstream repo is.
 
 ## How does it compare?
 
@@ -206,7 +216,7 @@ The wire format is documented byte-for-byte in [`SERVUX_WIRE_FORMAT.md`](SERVUX_
 
 ## License
 
-MIT. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`) — no upstream code copied; LGPL clean.
+[MIT](LICENSE). LitematicaFolia is an original implementation — no upstream code copied; LGPL clean. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`).
 
 ## Credits
 
@@ -219,4 +229,4 @@ Litematica is by [maruohon](https://github.com/maruohon). Servux protocol by [sa
 - [Source](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii)
 - [Issue tracker](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/issues)
 - [Releases](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases)
-- [Modrinth](https://modrinth.com/plugin/litematicafolia) *(once published)*
+- [Modrinth](https://modrinth.com/plugin/litematicafolia)
