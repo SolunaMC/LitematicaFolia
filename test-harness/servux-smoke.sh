@@ -301,7 +301,9 @@ send_rcon "save-all" >/dev/null 2>&1 || true
 sleep 2
 
 # Count paste-complete log entries.
-paste_complete=$(grep -cE 'paste complete:' "${LOG_FILE}" 2>/dev/null | head -n1 | tr -d '[:space:]')
+# NB: grep -c exits 1 on zero matches, which under `set -eo pipefail` used
+# to kill the script right here on the FAIL path (before write_result ran).
+paste_complete=$( (grep -cE 'paste complete:' "${LOG_FILE}" 2>/dev/null || true) | head -n1 | tr -d '[:space:]')
 [[ -z "${paste_complete}" ]] && paste_complete=0
 log "paste-complete log entries: ${paste_complete}"
 

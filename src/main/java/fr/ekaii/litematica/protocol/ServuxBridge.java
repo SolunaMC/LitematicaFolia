@@ -127,6 +127,26 @@ public final class ServuxBridge {
             return false;
         }
 
+        // Leaves-derived bases (Lophine, Leaves) ship their own Servux and
+        // claim our channel identifiers at the packet-decode layer even when
+        // their module is config-disabled (litematics-enabled=false), which
+        // silently swallows every C2S payload before the Bukkit Messenger
+        // sees it. Evict their codec entries so the packets reach us. No-op
+        // on Paper/Folia/Luminol. See LeavesChannelReclaim for the full
+        // mechanics.
+        try {
+            LeavesChannelReclaim.Result r = LeavesChannelReclaim.reclaim(LOG,
+                    ProtocolConstants.CHANNEL_LITEMATICS,
+                    ProtocolConstants.CHANNEL_STRUCTURES);
+            if (r == LeavesChannelReclaim.Result.FAILED) {
+                LOG.severe("Base Servux channel reclaim FAILED — Litematica clients will hang on "
+                        + "'uploading to Servux': the server base is intercepting the paste packets.");
+            }
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "Leaves channel reclaim crashed — on Leaves/Lophine bases the "
+                    + "paste C2S may never reach this plugin", t);
+        }
+
         enabled = true;
         LOG.info("Servux bridge online — channels: " + ProtocolConstants.CHANNEL_LITEMATICS
                 + ", " + ProtocolConstants.CHANNEL_STRUCTURES);

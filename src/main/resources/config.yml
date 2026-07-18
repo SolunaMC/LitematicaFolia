@@ -48,6 +48,12 @@ protocol:
   # LitematicaPaste to the multi-frame sliceForServux is 64 MiB, so a 128
   # MiB cap covers the inline path comfortably with room for outliers.
   maxDirectPasteSize: 134217728
+  # Log every inbound Servux C2S packet at INFO (channel, player, type,
+  # length). Direct-paste stream slices are downsampled (first + every
+  # 128th) so large uploads don't flood the log. Set false to silence.
+  logInbound: true
+  # Append a 96-byte hex dump to each logged inbound packet (deep debugging).
+  logInboundHex: false
 
 fawe:
   # Register a FAWE ClipboardFormat for .litematic when FAWE is detected.

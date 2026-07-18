@@ -2,6 +2,36 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.5.1+26.2 — 2026-07-18
+
+### Fixed — Servux paste swallowed by Leaves-derived bases (Lophine)
+
+- **Root cause**: Lophine (the 26.2 production base, a Leaves-patched Luminol
+  descendant) ships its own server-side Servux implementation behind a "Leaves
+  protocol core". `LeavesProtocolManager.init()` registers a `StreamCodec` for
+  `servux:litematics` / `servux:structures` **unconditionally** at boot — the
+  `function.protocol.servux.litematics.litematics-enabled = false` config gate
+  only disables the *handler* (`LeavesProtocol.isActive()`), not the codec.
+  Every inbound `ServerboundCustomPayloadPacket` on those channels therefore
+  decodes into a `LeavesCustomPayload` instead of a `DiscardedPayload`, and the
+  patched `ServerCommonPacketListenerImpl.handleCustomPayload()` consumes it
+  (silently, when disabled) *before* Paper's Bukkit-Messenger dispatch. This
+  plugin's incoming plugin channels never fired: Litematica clients hung
+  forever on "The placement is being uploaded to Servux for pasting", with zero
+  server-side logs. The 0.5.0 port validation missed it because
+  `servux-smoke.sh` ran against plain **Folia** 26.2 (no Leaves protocol core),
+  not Lophine.
+- **Fix**: new `LeavesChannelReclaim` — on bridge enable, reflectively evicts
+  our channel identifiers from `LeavesProtocolManager.ID2CODEC` and verifies
+  `decode()` now returns null, restoring the DiscardedPayload → Bukkit
+  Messenger fall-through. Clean no-op on Paper/Folia/Luminol bases; loud
+  SEVERE if the eviction fails on a Leaves base.
+- **Diagnostics**: inbound C2S logging is now a single INFO line per packet
+  (channel, player, type, length) gated on `protocol.logInbound` (default
+  true), with Direct-Paste slices downsampled (first + every 128th). The
+  previous unconditional per-packet hex dump moved behind
+  `protocol.logInboundHex` (default false).
+
 ## 0.5.0+26.2 — 2026-07-18
 
 ### Changed — Minecraft 26.2 port

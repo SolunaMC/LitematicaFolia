@@ -73,16 +73,17 @@ public final class PacketHandler {
      * </ul>
      */
     public void onLitematicsPacket(String channel, Player player, byte[] payload) {
-        LOG.info("[diag-net] RX " + channel + " from " + player.getName()
-                + " len=" + payload.length + " hex=" + hexDump(payload, 96));
-        if (!checkBaseGate(player)) {
-            LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
-            return;
-        }
+        int type = -1;
         try {
             ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
-            int type = r.readVarInt();
-            LOG.info("[diag-net] RX " + channel + " type=" + type + " from " + player.getName());
+            type = r.readVarInt();
+            logInbound(channel, player, payload, type,
+                    type == ProtocolConstants.Litematics.C2S_NBT_STREAM_DATA
+                            || type == ProtocolConstants.Litematics.C2S_NBT_STREAM_START);
+            if (!checkBaseGate(player)) {
+                LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
+                return;
+            }
             switch (type) {
                 case ProtocolConstants.Litematics.C2S_METADATA_REQUEST ->
                     metadata.onMetadataRequest(player, r);
@@ -103,21 +104,21 @@ public final class PacketHandler {
                         + " from " + player.getName());
             }
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "decode servux:litematics for " + player.getName(), t);
+            LOG.log(Level.WARNING, "decode servux:litematics (type=" + type + ", len="
+                    + payload.length + ") for " + player.getName(), t);
         }
     }
 
     public void onStructuresPacket(String channel, Player player, byte[] payload) {
-        LOG.info("[diag-net] RX " + channel + " from " + player.getName()
-                + " len=" + payload.length + " hex=" + hexDump(payload, 96));
-        if (!checkBaseGate(player)) {
-            LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
-            return;
-        }
+        int type = -1;
         try {
             ProtocolBuffer.Reader r = new ProtocolBuffer.Reader(payload);
-            int type = r.readVarInt();
-            LOG.info("[diag-net] RX " + channel + " type=" + type + " from " + player.getName());
+            type = r.readVarInt();
+            logInbound(channel, player, payload, type, false);
+            if (!checkBaseGate(player)) {
+                LOG.info("[diag-net] RX " + channel + " dropped (perm gate) for " + player.getName());
+                return;
+            }
             switch (type) {
                 case ProtocolConstants.Structures.C2S_REGISTER ->
                     structures.onRegister(player, r);
@@ -128,9 +129,43 @@ public final class PacketHandler {
                 default -> LOG.warning("unknown servux:structures packet type " + type);
             }
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "decode servux:structures for " + player.getName(), t);
+            LOG.log(Level.WARNING, "decode servux:structures (type=" + type + ", len="
+                    + payload.length + ") for " + player.getName(), t);
         }
     }
+
+    /**
+     * One-line INFO diagnostic per inbound C2S packet, gated on
+     * {@code protocol.logInbound} (default true). Direct-paste stream
+     * slices are downsampled — first slice then every 128th — so a large
+     * upload does not flood the log; the per-player slice counter resets
+     * whenever a non-slice packet arrives. {@code protocol.logInboundHex}
+     * (default false) appends a 96-byte hex dump for deep debugging.
+     */
+    private void logInbound(String channel, Player player, byte[] payload, int type, boolean slice) {
+        if (!plugin.getConfig().getBoolean("protocol.logInbound", true)) return;
+        long n = 0;
+        if (slice) {
+            n = sliceCounters.merge(player.getUniqueId(), 1L, Long::sum);
+            if (n != 1 && n % 128 != 0) return;
+        } else {
+            sliceCounters.remove(player.getUniqueId());
+        }
+        StringBuilder sb = new StringBuilder(96)
+                .append("[diag-net] RX ").append(channel)
+                .append(" type=").append(type)
+                .append(" len=").append(payload.length)
+                .append(" from ").append(player.getName());
+        if (slice) sb.append(" (slice #").append(n).append(')');
+        if (plugin.getConfig().getBoolean("protocol.logInboundHex", false)) {
+            sb.append(" hex=").append(hexDump(payload, 96));
+        }
+        LOG.info(sb.toString());
+    }
+
+    /** Per-player Direct-Paste slice counters for {@link #logInbound}. */
+    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> sliceCounters =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public void onEasyPlacePacket(String channel, Player player, byte[] payload) {
         if (!checkBaseGate(player)) return;
