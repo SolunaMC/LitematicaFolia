@@ -8,6 +8,8 @@
 
 **What's new in 0.5.1** — Direct Paste now works reliably on Leaves-lineage 26.2 servers (Lophine, Leaves, …): these servers ship their own in-core Servux protocol handling that used to swallow the plugin's `servux:*` channels, leaving client uploads hanging forever. The plugin now reclaims its channels automatically at startup — no config change needed, and a clean no-op on plain Paper/Folia/Luminol.
 
+**Tested on**: Paper 26.2 (build 62 — boot + paste), Folia 26.2 (built from `ver/26.2.x` source, no upstream build published yet — boot + full Servux Direct-Paste end-to-end), and Lophine 26.2 (production, channel-reclaim path).
+
 ---
 
 ## Why does this exist?
