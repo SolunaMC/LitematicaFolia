@@ -5,6 +5,14 @@ Reverse-engineered from the upstream Servux source at tag
 plugin's protocol code byte-for-byte. **No code from Servux has been
 imported** — only the wire facts, which are not themselves copyrightable.
 
+> **26.2 status (2026-07-18):** diffed upstream `26.1.2-0.10.2 → 26.2-0.11.1`
+> (20 commits): `ServuxLitematicaPacket.PROTOCOL_VERSION` still `1`,
+> `ServuxStructuresPacket.PROTOCOL_VERSION` still `2`, packet classes
+> untouched. Only behavioral deltas: `LitematicsDataProvider` bulk-entity
+> requests now use `getChunkNow` (fully-loaded chunks only) + user-facing
+> error messages; `0.11.2` raised the packet-splitter max buffer (ours is
+> already 128 MiB configurable). Everything below remains valid on 26.2.
+
 Servux is LGPL-3.0; this file documents an interoperable protocol, the
 same way a network RFC documents a protocol.
 

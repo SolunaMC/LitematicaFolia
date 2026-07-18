@@ -33,6 +33,10 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         // will simply not be registered in that case.
         try {
             PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
+            // No update checks: shaded lib, updates come with plugin releases —
+            // and the 2.13 checker thread NoClassDefFoundErrors against the
+            // adventure-api Paper 26.2 ships (Buildable was removed upstream).
+            PacketEvents.getAPI().getSettings().checkForUpdates(false);
             PacketEvents.getAPI().load();
             packetEventsLoaded = true;
         } catch (Throwable t) {

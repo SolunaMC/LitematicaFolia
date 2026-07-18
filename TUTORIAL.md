@@ -9,7 +9,7 @@ The simplest path. Best for staff/build teams and very large schematics.
 ### 1. Install the plugin
 ```bash
 # Drop in your server plugins dir
-cp LitematicaFolia-0.3.0+26.1.2-all.jar /opt/mc/plugins/
+cp LitematicaFolia-0.5.0+26.2-all.jar /opt/mc/plugins/
 ```
 
 Restart the server. On first start the plugin creates `plugins/LitematicaFolia/` with a `schematics/` subdir.

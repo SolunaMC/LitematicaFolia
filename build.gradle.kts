@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.4.2+26.1.2"
+version = "0.5.0+26.2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("26.1.2.build.53-stable")
+    paperweight.paperDevBundle("26.2.build.62-beta")
     compileOnly(libs.luckperms)
     // PacketEvents — required by EasyPlaceListener (P13). Shaded into the
     // final fat jar so end users don't need to install PacketEvents as a
@@ -57,9 +57,15 @@ tasks {
         relocate("com.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents")
         relocate("io.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents.spigot")
         // Strip transitive adventure / kyori from the shaded jar — Paper
-        // already provides them.
+        // already provides them. EXCEPT adventure-nbt (+ the examination-*
+        // artifacts its types implement): PacketEvents 2.13 needs them and
+        // Paper does not expose them to plugins (NoClassDefFoundError:
+        // net/kyori/adventure/nbt/BinaryTag, net/kyori/examination/Examinable).
+        val shadedKyori = setOf("adventure-nbt", "examination-api", "examination-string")
         dependencies {
-            exclude(dependency("net.kyori:.*"))
+            exclude { dep ->
+                dep.moduleGroup == "net.kyori" && dep.moduleName !in shadedKyori
+            }
         }
     }
     compileJava {
@@ -75,7 +81,7 @@ tasks {
             "name" to project.name,
             "version" to project.version,
             "description" to project.description,
-            "apiVersion" to "26.1"
+            "apiVersion" to "26.2"
         )
         inputs.properties(props)
         filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {

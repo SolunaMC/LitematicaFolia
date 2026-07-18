@@ -129,20 +129,34 @@ public interface NmsBridge {
     // -------------------------------------------------------------- Factory
 
     /**
-     * Returns the active bridge implementation. On Paper 26.1.2 this is the
-     * {@code NmsBridge26_1_2} class loaded reflectively (a different agent
-     * owns its implementation). If reflection or class-resolution fails,
-     * returns a {@link NoopNmsBridge} that logs warnings.
+     * Candidate bridge implementations, newest first. Each jar ships the
+     * bridge compiled against its own dev bundle; older names are kept as
+     * fallbacks so a mismatched deploy degrades loudly instead of silently.
+     */
+    String[] BRIDGE_CANDIDATES = {
+            "fr.ekaii.litematica.nms.NmsBridge26_2",
+            "fr.ekaii.litematica.nms.NmsBridge26_1_2",
+    };
+
+    /**
+     * Returns the active bridge implementation: the first candidate in
+     * {@link #BRIDGE_CANDIDATES} that loads and instantiates against the
+     * running server's NMS. If none resolves, returns a
+     * {@link NoopNmsBridge} that logs warnings.
      */
     static NmsBridge get() {
-        try {
-            Class<?> cls = Class.forName("fr.ekaii.litematica.nms.NmsBridge26_1_2");
-            return (NmsBridge) cls.getDeclaredConstructor().newInstance();
-        } catch (Throwable t) {
-            java.util.logging.Logger.getLogger("LitematicaFolia")
-                    .log(java.util.logging.Level.WARNING,
-                            "NmsBridge26_1_2 unavailable, falling back to no-op", t);
-            return new NoopNmsBridge();
+        java.util.logging.Logger log = java.util.logging.Logger.getLogger("LitematicaFolia");
+        for (String name : BRIDGE_CANDIDATES) {
+            try {
+                Class<?> cls = Class.forName(name);
+                return (NmsBridge) cls.getDeclaredConstructor().newInstance();
+            } catch (Throwable t) {
+                log.fine("NMS bridge candidate " + name + " unavailable: " + t);
+            }
         }
+        log.warning("No NMS bridge candidate resolved ("
+                + String.join(", ", BRIDGE_CANDIDATES)
+                + ") — falling back to no-op; TE/entity/tick features disabled");
+        return new NoopNmsBridge();
     }
 }

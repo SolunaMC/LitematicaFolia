@@ -39,7 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.logging.Logger;
 
 /**
- * Paper 26.1.2 NMS bridge implementation. Depends on mojang-mapped
+ * Paper 26.2 NMS bridge implementation. Depends on mojang-mapped
  * {@code net.minecraft.*} classes via paperweight-userdev.
  *
  * <p>All public methods are designed to be called from the chunk's owning
@@ -51,13 +51,13 @@ import java.util.logging.Logger;
  * will eventually re-tick and pick up the changes). Other errors are
  * re-thrown.
  */
-public final class NmsBridge26_1_2 implements NmsBridge {
+public final class NmsBridge26_2 implements NmsBridge {
 
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/NmsBridge");
 
     private final int currentDataVersion;
 
-    public NmsBridge26_1_2() {
+    public NmsBridge26_2() {
         this.currentDataVersion = SharedConstants.getCurrentVersion().dataVersion().version();
     }
 
@@ -89,7 +89,7 @@ public final class NmsBridge26_1_2 implements NmsBridge {
             cleaned.remove("y");
             cleaned.remove("z");
             cleaned.remove("id");
-            // TagValueInput.create returns a ValueInput in 26.1.2 — use var.
+            // TagValueInput.create returns a ValueInput in 26.2 — use var.
             var input = TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), cleaned);
             be.loadWithComponents(input);
             be.setChanged();
@@ -118,8 +118,11 @@ public final class NmsBridge26_1_2 implements NmsBridge {
             if (id.endsWith(":player") || id.equals("player") || id.endsWith(":Player")) {
                 return null;
             }
+            // 26.2: the CompoundTag overload now pairs with EntitySpawnRequest;
+            // keep EntitySpawnReason.LOAD by going through the ValueInput overload.
+            var entityInput = TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), tag);
             Entity spawned = EntityType.loadEntityRecursive(
-                    tag, level, net.minecraft.world.entity.EntitySpawnReason.LOAD,
+                    entityInput, level, net.minecraft.world.entity.EntitySpawnReason.LOAD,
                     entity -> {
                         entity.setUUID(java.util.UUID.randomUUID());
                         entity.snapTo(loc.getX(), loc.getY(), loc.getZ(),
@@ -188,8 +191,8 @@ public final class NmsBridge26_1_2 implements NmsBridge {
 
     // ------------------------------------------------------------------ Extraction (save v2)
     // 2026-05-24: real NMS impl. saveWithFullMetadata(HolderLookup.Provider)
-    // is the canonical capture API on 26.1.2 for BlockEntities; Entity#save
-    // takes a ValueOutput in 26.1.2 (TagValueOutput.createWithContext builds
+    // is the canonical capture API on 26.x for BlockEntities; Entity#save
+    // takes a ValueOutput (TagValueOutput.createWithContext builds
     // one against a problem reporter + registry access).
 
     @Override

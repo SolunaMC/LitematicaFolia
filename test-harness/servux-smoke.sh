@@ -118,7 +118,7 @@ fi
 log "plugin jar: ${PLUGIN_JAR}"
 
 # -------------------------------------------------------------- 2) server jar
-SERVER_JAR="$(ls -1 "${SERVER_DIR}"/luminol*.jar "${SERVER_DIR}"/paper*.jar 2>/dev/null | head -n1 || true)"
+SERVER_JAR="$(ls -1 "${SERVER_DIR}"/folia*.jar "${SERVER_DIR}"/luminol*.jar "${SERVER_DIR}"/paper*.jar 2>/dev/null | head -n1 || true)"
 if [[ -z "${SERVER_JAR}" ]]; then
     write_result "FAIL" "no server jar in ${SERVER_DIR} — run run-tests.sh once to fetch one"
     exit 1

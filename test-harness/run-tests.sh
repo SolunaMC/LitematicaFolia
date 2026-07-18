@@ -213,15 +213,15 @@ mkdir -p "${SERVER_DIR}/plugins"
 SERVER_JAR=""
 if [[ -f "${SERVER_DIR}/${LUMINOL_JAR_NAME}" ]]; then
     SERVER_JAR="${LUMINOL_JAR_NAME}"
-    log "server: reusing cached Luminol jar (${SERVER_JAR})"
+    log "server: reusing cached server jar (${SERVER_JAR})"
 fi
 
 # Also accept anything matching luminol*.jar already present.
 if [[ -z "${SERVER_JAR}" ]]; then
-    cand="$(ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null | head -n1 || true)"
+    cand="$(ls -1 "${SERVER_DIR}"/folia*.jar "${SERVER_DIR}"/luminol*.jar 2>/dev/null | head -n1 || true)"
     if [[ -n "${cand}" ]]; then
         SERVER_JAR="$(basename "${cand}")"
-        log "server: reusing cached Luminol jar (${SERVER_JAR})"
+        log "server: reusing cached server jar (${SERVER_JAR})"
     fi
 fi
 

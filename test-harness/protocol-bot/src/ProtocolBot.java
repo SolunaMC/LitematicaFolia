@@ -45,7 +45,7 @@ import java.util.UUID;
 public final class ProtocolBot {
 
     // ----- MC protocol version for 26.1.2 (extracted from version.json) -----
-    private static final int PROTOCOL_VERSION = 775;
+    private static final int PROTOCOL_VERSION = 776; // MC 26.2 (was 775 = 26.1.2)
 
     // ----- Login Server→Client -----
     private static final int LOGIN_S2C_DISCONNECT = 0;

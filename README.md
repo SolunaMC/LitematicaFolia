@@ -46,9 +46,9 @@ Requirements:
 
 | | |
 |---|---|
-| Server | Paper 26.1.2 build 53+ (or any fork: Folia, Luminol, Purpur 26.1+) |
+| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Purpur 26.2+) — for 26.1.x use the 0.4.x releases |
 | Java | JDK 25 |
-| API version | 26.1 |
+| API version | 26.2 |
 | Optional | LuckPerms (perm gating), FastAsyncWorldEdit (future ClipboardFormat adapter) |
 
 ## Client setup — Litematica Direct Paste
@@ -92,6 +92,16 @@ Direct Paste flies via the `servux:litematics` channel. Server logs:
 [direct-paste] inline LitematicaPaste from <player>
 paste complete: 869514 blocks, 6516 TE, 0 entities, 0 err in 5747ms
 ```
+
+## Server admin — Leaves-lineage servers (Lophine, Leaves, …)
+
+Leaves-based servers (including **Lophine**, the Luminol downstream) implement
+the Servux protocol **in the server core** and consume every `servux:*`
+custom-payload before Bukkit plugins can see it — even with the
+`[function.protocol.servux]` toggles off in `lophine_global_config.toml`.
+On those servers this plugin's Servux bridge (Direct Paste, bulk requests)
+is dead on arrival: use the server's native Servux support instead.
+Commands (`/litematica paste|save|…`) work everywhere.
 
 ## Server admin — Velocity proxy tuning
 
@@ -196,7 +206,7 @@ The wire format is documented byte-for-byte in [`SERVUX_WIRE_FORMAT.md`](SERVUX_
 
 ## License
 
-MIT. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) — no upstream code copied; LGPL clean.
+MIT. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`) — no upstream code copied; LGPL clean.
 
 ## Credits
 

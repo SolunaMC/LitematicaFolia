@@ -1,7 +1,7 @@
 [versions]
 luckperms = "5.4"
 fawe = "2.14.0-SNAPSHOT"
-packetevents = "2.7.0"
+packetevents = "2.13.0"
 
 # Plugins
 paperweight-userdev = "2.0.0-SNAPSHOT"
