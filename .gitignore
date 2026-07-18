@@ -52,3 +52,5 @@ test-harness/servux-gradle.log
 hs_err_pid*
 local-smoke-server/
 test-harness/server/
+test-harness/save-result.txt
+test-harness/servux-smoke.txt

@@ -24,13 +24,15 @@ class PackedLongArrayTest {
     }
 
     @Test
-    void requiredLongsIsWordAligned() {
-        // 64 entries × 2 bits → 32 entries per long → 2 longs
+    void requiredLongsIsCeilOfTotalBits() {
+        // Compact cross-word layout: longCount = ceil(totalEntries × bits / 64).
+        // 64 entries × 2 bits = 128 bits → 2 longs
         assertEquals(2, PackedLongArray.requiredLongs(64, 2));
-        // 65 entries × 2 bits → ceil(65/32) = 3 longs
+        // 65 entries × 2 bits = 130 bits → 3 longs
         assertEquals(3, PackedLongArray.requiredLongs(65, 2));
-        // 64 entries × 5 bits → 12 entries per long → ceil(64/12)=6 longs
-        assertEquals(6, PackedLongArray.requiredLongs(64, 5));
+        // 64 entries × 5 bits = 320 bits → 5 longs (word-aligned would need 6 —
+        // .litematic uses the compact layout, entries may cross long boundaries)
+        assertEquals(5, PackedLongArray.requiredLongs(64, 5));
         assertEquals(0, PackedLongArray.requiredLongs(0, 5));
     }
 
@@ -66,17 +68,19 @@ class PackedLongArrayTest {
     }
 
     @Test
-    void wordAlignmentMeansNoCrossingEntries() {
-        // 5-bit entries → 12 per long, 4 bits wasted per long.
-        // Verify the high 4 bits of each long are zero after encoding.
+    void compactPackingCrossesWordBoundaries() {
+        // 24 entries × 5 bits = 120 bits → 2 longs. Entry 12 occupies bits
+        // 60..64 and MUST span the long boundary (compact .litematic layout).
         int[] in = new int[24];
         for (int i = 0; i < in.length; i++) in[i] = 31;        // all bits set
         long[] packed = PackedLongArray.encode(in, 5);
         assertEquals(2, packed.length);
-        // top 4 bits of each long must be zero (bits 60..63)
-        for (long l : packed) {
-            assertEquals(0L, l >>> 60, "high bits should be zero (word-aligned packing)");
-        }
+        // First long fully saturated — including the low 4 bits of entry 12.
+        assertEquals(-1L, packed[0], "bits 0..63 all set (entry 12 crosses into long 0)");
+        // Second long holds the remaining 56 bits (entry 12's high bit + entries 13..23).
+        assertEquals((1L << 56) - 1L, packed[1], "bits 0..55 set, top 8 unused");
+        // And the boundary-spanning entry survives a round-trip.
+        assertArrayEquals(in, PackedLongArray.decode(packed, 5, in.length));
     }
 
     @Test

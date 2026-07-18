@@ -8,7 +8,17 @@ Production-ready Paper/Folia plugin that reads `.litematic` files and pastes the
 
 Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prompts.
 
-## State (last tick: 2026-05-24 ~16:40 — **v0.2.0+26.1.2 released, deployed creaclone+plot, loop terminated**)
+## State (last update: 2026-07-18 — **v0.5.0+26.2: Minecraft 26.2 port + save origin-normalization**)
+
+### v0.5.0+26.2 (2026-07-18) — 26.2 port
+
+- Dev bundle `26.1.2.build.53-stable` → `26.2.build.62-beta` (no stable channel for 26.2 yet); api-version 26.2; single NMS drift fixed (`EntityType.loadEntityRecursive` via `TagValueInput`); `NmsBridge26_1_2` → `NmsBridge26_2` with a candidate-list factory.
+- Servux wire format re-verified unchanged on 26.2 (`26.2-0.11.1`: litematics PROTOCOL_VERSION=1, structures=2) — see the 26.2 status note in `SERVUX_WIRE_FORMAT.md`.
+- **v0.3.0's "save reads 0 blocks after paste" was a misdiagnosis** — no staleness ever existed; the fixture bakes region `Position=(0,64,0)` and paste follows `world = origin + region Position`, so the repro saved the wrong box. Paste now logs each region's effective world placement; `/litematica save` now writes origin-normalized regions (`Position=(0,0,0)`); `test-harness/save-smoke.sh` guards the full paste→save→re-paste→save contract. Two stale word-aligned `PackedLongArrayTest` cases (red since the compact cross-word codec landed in `4b4e7f1`) rewritten — suite green again, keep it that way.
+- Smoke stack runs on **Lophine `26.2-917b2cf`** (Luminol downstream; Folia itself has no published 26.2 build yet; Luminol's GitHub repo is gone). Server jar: `test-harness/server/luminol-26.2-lophine-917b2cf.jar`.
+- 26.2 gotchas for future work: `Level.getBlockState` NPEs on threads without regionized world data (`getCurrentWorldData()==null` — e.g. console/RCON command context running `execute if block`); protocol version 776, data version 4903 (protocol-bot `PROTOCOL_VERSION` must match).
+
+## Historical state (2026-05-24 ~16:40 — v0.2.0+26.1.2 released, deployed creaclone+plot, loop terminated)
 
 ### v0.2.0 release + deploy
 
@@ -250,10 +260,11 @@ Mode: **full autonomous** — multi-agent, wakeup every 5–10 min, no user prom
   - Open TODOs marked in code with `// TODO smoke-test with vanilla Litematica client`
 
 ### In flight / next
-- [ ] **P1d v2** — `save` to capture TE/entities/pending-ticks (currently blocks-only; documented TODO)
-- [ ] **Re-run smoke harness** with P1d commands jar
+- [x] **P1d v2** — `save` captures TE/entities/pending-ticks since v0.3.0 (`598f213` + NMS extractors); origin-normalized since v0.5.0
+- [x] **Re-run smoke harness** — full stack (load + paste + save round-trip) green on 26.2/Lophine, 2026-07-18
 - [ ] **P3 FAWE adapter** — on hold (`mvn.intellectualsites.com` NXDOMAIN)
-- [ ] **P4 hardening + release** — pending smoke green
+- [x] **P4 hardening + release** — v0.3.0 → v0.5.0 shipped
+- [ ] **protocol-bot 26.2** — `PROTOCOL_VERSION` 775 → 776 done; packet IDs unverified against 26.2 (re-derive via `javap` on the Lophine jar if servux-smoke fails)
 
 ## Architecture
 

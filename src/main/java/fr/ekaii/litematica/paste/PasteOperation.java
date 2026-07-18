@@ -505,6 +505,17 @@ public final class PasteOperation {
         int startY = origin.getBlockY() + region.originY;
         int startZ = origin.getBlockZ() + rotRO[1];
 
+        // Regions carry their own offset inside the schematic (Litematica
+        // convention: world = paste origin + region position + local). Log the
+        // effective placement so a region with a non-zero baked offset (e.g. a
+        // fixture saved with Position.y=64) is never mistaken for a paste that
+        // "wrote nothing" at the command coordinates.
+        LOG.info("paste region '" + region.name + "': offset ("
+                + region.originX + "," + region.originY + "," + region.originZ
+                + ") yaw=" + yaw + " -> world start ("
+                + startX + "," + startY + "," + startZ + "), size "
+                + sizeX + "x" + sizeY + "x" + sizeZ);
+
         for (int ry = 0; ry < sizeY; ry++) {
             int wy = startY + ry;
             for (int rz = 0; rz < sizeZ; rz++) {
@@ -610,6 +621,7 @@ public final class PasteOperation {
     private void applyChunkBlocks(World world, List<PendingWrite> writes, AtomicLong counter,
                                   ConcurrentLinkedQueue<String> errors) {
         if (cancelled.get()) return;
+        boolean dbgFirst = Boolean.getBoolean("litematica.debugPaste");
         for (PendingWrite pw : writes) {
             // Cancellation checkpoint — cheap volatile read between writes.
             if (cancelled.get()) {
@@ -621,6 +633,27 @@ public final class PasteOperation {
                 // Bukkit overload: setBlockData(data, applyPhysics) — applyPhysics=false to defer.
                 b.setBlockData(pw.data, !options.deferredPhysics());
                 counter.incrementAndGet();
+                if (dbgFirst) {
+                    dbgFirst = false;
+                    String readBack;
+                    try {
+                        readBack = b.getBlockData().getAsString();
+                    } catch (Throwable rb) {
+                        readBack = "READBACK-THREW: " + rb;
+                    }
+                    boolean owned;
+                    try {
+                        owned = org.bukkit.Bukkit.isOwnedByCurrentRegion(world, pw.x >> 4, pw.z >> 4);
+                    } catch (Throwable ow) {
+                        owned = false;
+                    }
+                    LOG.info("[debugPaste] first write (" + pw.x + "," + pw.y + "," + pw.z + ")"
+                            + " thread=" + Thread.currentThread().getName()
+                            + " ownedByRegion=" + owned
+                            + " chunkLoaded=" + world.isChunkLoaded(pw.x >> 4, pw.z >> 4)
+                            + " wrote=" + pw.data.getAsString()
+                            + " readBack=" + readBack);
+                }
             } catch (Throwable t) {
                 if (FoliaThreadException.isFoliaThreadException(t)) {
                     errors.add("setBlock (" + pw.x + "," + pw.y + "," + pw.z + "): wrong region thread");

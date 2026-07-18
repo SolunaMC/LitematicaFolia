@@ -2,6 +2,121 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.5.0+26.2 — 2026-07-18
+
+### Changed — Minecraft 26.2 port
+
+- **Dev bundle** `26.1.2.build.53-stable` → `26.2.build.62-beta` (no `-stable`
+  channel published for 26.2 yet); `api-version` 26.1 → 26.2.
+- **NMS drift was a single call site**: `EntityType.loadEntityRecursive` no
+  longer accepts a raw `CompoundTag` together with `EntitySpawnReason` (the
+  `CompoundTag` overload now pairs with the new `EntitySpawnRequest`). We keep
+  `EntitySpawnReason.LOAD` and go through the surviving
+  `(ValueInput, Level, EntitySpawnReason, EntityProcessor)` overload by wrapping
+  the tag in a `TagValueInput` — the same pattern the bridge already used for
+  block entities.
+- **`NmsBridge26_1_2` → `NmsBridge26_2`**; `NmsBridge.get()` now walks a
+  `BRIDGE_CANDIDATES` list (newest first) instead of hardcoding one class name,
+  and logs loudly before degrading to the no-op bridge.
+- **Servux wire format re-verified on 26.2** against upstream
+  `26.1.2-0.10.2 → 26.2-0.11.1` (20 commits): litematics `PROTOCOL_VERSION=1`
+  and structures `=2` unchanged, packet classes untouched. Upstream `0.11.2`
+  raised the packet-splitter buffer cap — ours has been 128 MiB configurable
+  since 0.3.0. See the 26.2 status note in `SERVUX_WIRE_FORMAT.md`.
+
+### Fixed — stale word-aligned PackedLongArray tests
+
+- Two `PackedLongArrayTest` cases still asserted the **word-aligned** packing
+  of the original scaffold and had been failing since the codec was switched to
+  the compact **cross-word** `.litematic` layout in the Direct Paste
+  byte-alignment work (`4b4e7f1`, validated against a real client). The
+  implementation was correct; the tests were stale. They now assert
+  `requiredLongs = ceil(entries×bits/64)` and that a 5-bit entry genuinely
+  spans a long boundary (v0.4.x releases were cut with these two tests red —
+  test suite is green again, enforce it from now on).
+
+### Fixed — the v0.3.0 "0 blocks after paste" bug was a misdiagnosis, and saves now origin-normalize
+
+- Building a save round-trip smoke for 26.2 reproduced the "0 blocks" symptom
+  and disproved the staleness theory. The save read path was **always
+  correct** (it sees `setblock`-placed blocks and terrain fine). The real
+  cause: `stone-cube-4` is generated (`Fixtures.java`) with region
+  `Position=(0,64,0)`, and paste follows the Litematica convention
+  `world = paste origin + region Position + local` — so pasting at `(x,64,z)`
+  puts the cube at `y=128`, and the original repro saved the empty box at
+  `y=64..67`. The "CraftChunk snapshot staleness across region threads"
+  diagnosis (and the NMS-direct read in `11483cc` that "fixed" it) addressed
+  a bug that never existed.
+- **Paste now logs each region's effective world placement**
+  (`paste region 'main': offset (0,64,0) yaw=0 -> world start (…)`), so a
+  baked region offset can never masquerade as a silent no-op again.
+- **`/litematica save` now writes region `Position=(0,0,0)`** (relative,
+  upstream-idiomatic) instead of baking the absolute world min-corner. Before
+  this, pasting a schematic you saved at world `(1000,64,1000)` with
+  `/litematica paste s 50 64 50` would land it at `(1050,128,1050)` — the
+  same offset trap, self-inflicted. TE/entity/pending-tick coords were
+  already region-local; only the region origin was absolute.
+
+### Changed — PacketEvents 2.7.0 → 2.13.0
+
+- PacketEvents 2.7.0 fails to initialize on 26.2-era servers — it can't parse
+  the new server version-string format (`Version string must be in the format
+  'major.minor[.patch][+commit][-SNAPSHOT]', found '26.2.build.584'`) — which
+  silently disabled the Easy Place V3 listener. 2.13.0 (2026-06-22) parses it;
+  no API drift at our call sites. Fat jar grows ~1.6 MiB.
+- Its update-check thread is now disabled (`checkForUpdates(false)`): the lib
+  is shaded so updates ship with plugin releases, and the 2.13 checker
+  NoClassDefFoundErrors against the adventure-api Paper 26.2 bundles
+  (`Buildable` was removed upstream).
+
+### Changed — test harness
+
+- All four harness scripts now prefer `folia*.jar` in the server-jar globs.
+  Trap this fixes: with only an unrecognized jar name present, `run-tests.sh`
+  silently fell back to **copying the sibling axiom-folia Luminol 26.1.2 jar**
+  and the whole "26.2" battery actually ran on 26.1.2 (caught because the
+  protocol-776 bot got kicked with "Outdated server! I'm still on 26.1.2").
+- Smoke server is a **source-built Folia `ver/26.2.x`**
+  (`folia-paperclip-26.2.local-SNAPSHOT.jar`, `createPaperclipJar` — note:
+  not `createMojmapPaperclipJar` anymore). Lophine `26.2-917b2cf` also kept
+  for load/paste/save runs.
+- `protocol-bot` bumped to protocol **776** (26.2, data version 4903) — all
+  packet IDs from 26.1.2 survived unchanged.
+
+### Known issue — Lophine/Leaves servers natively intercept `servux:*` channels
+
+- Lophine (and anything carrying Leaves protocol patches) implements the
+  Servux protocol **in the server core** (`org.leavesmc.leaves.protocol.servux`,
+  toggles under `[function.protocol.servux]` in `lophine_global_config.toml`).
+  `LeavesProtocolManager.handleBytebuf` consumes any payload whose channel has
+  a registered receiver **before** the Bukkit Messenger dispatch — and the
+  receivers are registered even when config-disabled. Net effect: on Lophine,
+  C2S `servux:litematics` traffic never reaches this plugin (Direct Paste /
+  bulk requests / metadata requests dead; the S2C metadata push still works).
+  Commands, paste, save are unaffected. On real Folia/Paper the Messenger
+  path is intact. **Do not deploy the Servux bridge on Leaves-lineage
+  servers** — use their native implementation there instead.
+
+### Validation
+
+- 62 unit tests green (1 skipped stress gate).
+- Smoke on **Lophine `26.2-917b2cf`** (Luminol downstream, Folia family) AND
+  on **Folia `ver/26.2.x` built from source** (no published 26.2 build yet):
+  plugin-load smoke PASS, paste smoke PASS, new **save round-trip smoke**
+  PASS (see below). Servux protocol-bot smoke (protocol 776) PASS on Folia;
+  on Lophine it cannot pass — see known issue above.
+
+### Added — save round-trip smoke (`test-harness/save-smoke.sh`)
+
+- paste `stone-cube-4` at `(100,64,100)` → save the box where it actually
+  lands (`y+64`, per the fixture's baked region offset) and assert exactly
+  64 blocks → re-paste the saved file (origin-normalized, so it lands exactly
+  at the re-paste coordinates) → save that box too and assert 64 again.
+  Guards the whole paste/save coordinate contract end-to-end.
+- Debug aid: `-Dlitematica.debugPaste=true` logs the first write of each
+  chunk batch with thread, region ownership, chunk-loaded state, and a
+  read-back of the block just written.
+
 ## 0.4.2+26.1.2 — 2026-07-02
 
 ### Fixed — PasteOperation semaphore deadlock (continuation loops on region threads)

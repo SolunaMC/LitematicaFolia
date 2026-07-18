@@ -638,9 +638,14 @@ public final class LitematicaCommands {
 
                         LitematicRegion region = new LitematicRegion();
                         region.name = name;
-                        region.originX = minX;
-                        region.originY = minY;
-                        region.originZ = minZ;
+                        // Region position is RELATIVE to the schematic origin
+                        // (Litematica convention; single-region area saves use
+                        // (0,0,0)). Baking absolute world coords here would make
+                        // a later paste at (x,y,z) land at (x+minX, y+minY,
+                        // z+minZ) — nowhere near the command coordinates.
+                        region.originX = 0;
+                        region.originY = 0;
+                        region.originZ = 0;
                         region.sizeX = sizeX;
                         region.sizeY = sizeY;
                         region.sizeZ = sizeZ;
