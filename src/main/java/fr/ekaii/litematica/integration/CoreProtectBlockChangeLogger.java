@@ -37,7 +37,15 @@ public final class CoreProtectBlockChangeLogger implements BlockChangeLogger {
      * available, preserving normal paste behavior.
      */
     public static BlockChangeLogger connect(Plugin owner) {
-        Plugin installed = owner.getServer().getPluginManager().getPlugin("CoreProtect");
+        return connect(owner, owner.getServer().getPluginManager().getPlugin("CoreProtect"));
+    }
+
+    /**
+     * Connects to a specific enabled plugin instance. The overload is used
+     * by the plugin-enable listener so Paper/Bukkit mixed load phases cannot
+     * lose a late CoreProtect activation between plugin-manager lookups.
+     */
+    public static BlockChangeLogger connect(Plugin owner, Plugin installed) {
         if (!(installed instanceof CoreProtect coreProtect)) {
             owner.getLogger().info("CoreProtect not found; paste block logging disabled.");
             return BlockChangeLogger.noOp();

@@ -8,6 +8,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRegisterChannelEvent;
+import org.bukkit.event.server.PluginEnableEvent;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class LitematicaFolia extends JavaPlugin implements Listener {
@@ -16,7 +18,7 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     private fr.ekaii.litematica.protocol.ServuxBridge servuxBridge;
     private fr.ekaii.litematica.protocol.easyplace.EasyPlaceListener easyPlaceListener;
     private boolean packetEventsLoaded;
-    private BlockChangeLogger blockChangeLogger = BlockChangeLogger.noOp();
+    private volatile BlockChangeLogger blockChangeLogger = BlockChangeLogger.noOp();
 
     public static LitematicaFolia get() {
         return instance;
@@ -138,6 +140,21 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
                 30, java.util.concurrent.TimeUnit.SECONDS);
     }
 
+    /**
+     * Paper can enable this STARTUP-phase plugin before an optional
+     * POSTWORLD Bukkit dependency. Retry the CoreProtect hook when that
+     * plugin actually becomes enabled instead of keeping the startup no-op
+     * logger for the lifetime of the server.
+     */
+    @EventHandler
+    public void onPluginEnable(PluginEnableEvent event) {
+        Plugin enabledPlugin = event.getPlugin();
+        if (!blockChangeLogger.isEnabled()
+                && "CoreProtect".equals(enabledPlugin.getName())) {
+            initializeBlockChangeLogger(enabledPlugin);
+        }
+    }
+
     @Override
     public void onDisable() {
         if (servuxBridge != null) {
@@ -159,16 +176,24 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
      * path and never need its classes.
      */
     private void initializeBlockChangeLogger() {
-        org.bukkit.plugin.Plugin coreProtect =
-                getServer().getPluginManager().getPlugin("CoreProtect");
-        if (coreProtect == null || !coreProtect.isEnabled()) {
-            getLogger().info("CoreProtect not found; paste block logging disabled.");
+        initializeBlockChangeLogger(
+                getServer().getPluginManager().getPlugin("CoreProtect"));
+    }
+
+    private void initializeBlockChangeLogger(Plugin coreProtect) {
+        if (coreProtect == null) {
+            getLogger().info("CoreProtect not found yet; paste block logging will activate if it becomes available.");
+            blockChangeLogger = BlockChangeLogger.noOp();
+            return;
+        }
+        if (!coreProtect.isEnabled()) {
+            getLogger().info("CoreProtect detected but not enabled yet; paste block logging is waiting for it.");
             blockChangeLogger = BlockChangeLogger.noOp();
             return;
         }
 
         try {
-            blockChangeLogger = CoreProtectBlockChangeLogger.connect(this);
+            blockChangeLogger = CoreProtectBlockChangeLogger.connect(this, coreProtect);
         } catch (Throwable failure) {
             blockChangeLogger = BlockChangeLogger.noOp();
             getLogger().log(java.util.logging.Level.WARNING,
