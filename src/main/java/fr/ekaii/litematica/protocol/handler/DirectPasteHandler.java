@@ -260,7 +260,7 @@ public final class DirectPasteHandler {
             Location origin   = readOrigin(session.placementData, player);
             PasteOptions opts = readOptions(session.placementData, origin);
 
-            new PasteOperation(plugin, schem, opts).execute()
+            new PasteOperation(plugin, schem, opts, player.getName()).execute()
                     .whenComplete((res, err) -> {
                         activePastes.remove(uid);
                         reportComplete(player, res, err);
@@ -363,7 +363,7 @@ public final class DirectPasteHandler {
                     + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ() + "…");
             // Ownership handoff: slot is now released by whenComplete.
             handedOff = true;
-            new PasteOperation(plugin, schem, opts).execute()
+            new PasteOperation(plugin, schem, opts, player.getName()).execute()
                     .whenComplete((res, err) -> {
                         activePastes.remove(uid);
                         reportComplete(player, res, err);

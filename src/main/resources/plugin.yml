@@ -5,7 +5,7 @@ description: "${description}"
 authors: ["exo"]
 api-version: "${apiVersion}"
 folia-supported: true
-softdepend: [LuckPerms, FastAsyncWorldEdit]
+softdepend: [LuckPerms, FastAsyncWorldEdit, CoreProtect]
 permissions:
   litematica.use:
     description: Base permission

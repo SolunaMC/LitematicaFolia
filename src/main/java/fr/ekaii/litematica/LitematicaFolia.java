@@ -1,6 +1,8 @@
 package fr.ekaii.litematica;
 
 import com.github.retrooper.packetevents.PacketEvents;
+import fr.ekaii.litematica.integration.BlockChangeLogger;
+import fr.ekaii.litematica.integration.CoreProtectBlockChangeLogger;
 import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -14,6 +16,7 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     private fr.ekaii.litematica.protocol.ServuxBridge servuxBridge;
     private fr.ekaii.litematica.protocol.easyplace.EasyPlaceListener easyPlaceListener;
     private boolean packetEventsLoaded;
+    private BlockChangeLogger blockChangeLogger = BlockChangeLogger.noOp();
 
     public static LitematicaFolia get() {
         return instance;
@@ -21,6 +24,10 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
 
     public fr.ekaii.litematica.protocol.ServuxBridge getServuxBridge() {
         return servuxBridge;
+    }
+
+    public BlockChangeLogger getBlockChangeLogger() {
+        return blockChangeLogger;
     }
 
     @Override
@@ -49,6 +56,7 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     public void onEnable() {
         instance = this;
         saveDefaultConfig();
+        initializeBlockChangeLogger();
         getLogger().info("LitematicaFolia enabling — schematics dir: " + getSchematicsDir());
         getLogger().info("Folia detected: " + fr.ekaii.litematica.paste.FoliaCompat.isFolia());
         getSchematicsDir().mkdirs();
@@ -141,7 +149,32 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
             packetEventsLoaded = false;
         }
         easyPlaceListener = null;
+        blockChangeLogger = BlockChangeLogger.noOp();
         instance = null;
+    }
+
+    /**
+     * Loads the CoreProtect-linked class only when the optional plugin is
+     * actually present, so servers without CoreProtect keep a clean no-op
+     * path and never need its classes.
+     */
+    private void initializeBlockChangeLogger() {
+        org.bukkit.plugin.Plugin coreProtect =
+                getServer().getPluginManager().getPlugin("CoreProtect");
+        if (coreProtect == null || !coreProtect.isEnabled()) {
+            getLogger().info("CoreProtect not found; paste block logging disabled.");
+            blockChangeLogger = BlockChangeLogger.noOp();
+            return;
+        }
+
+        try {
+            blockChangeLogger = CoreProtectBlockChangeLogger.connect(this);
+        } catch (Throwable failure) {
+            blockChangeLogger = BlockChangeLogger.noOp();
+            getLogger().log(java.util.logging.Level.WARNING,
+                    "CoreProtect integration could not be initialized; paste behavior is unchanged.",
+                    failure);
+        }
     }
 
     public java.io.File getSchematicsDir() {

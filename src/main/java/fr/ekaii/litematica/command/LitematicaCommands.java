@@ -289,6 +289,7 @@ public final class LitematicaCommands {
         // (3.5 MiB+) take ~10s to NBT-decode + unpack; doing that synchronously
         // here trips Folia's watchdog and blocks the player's connection.
         String ticket = sender.getName() + "#" + opSeq.incrementAndGet();
+        String auditActor = sender instanceof Player ? sender.getName() : "#litematica";
         sender.sendMessage(Component.text(
                 "ticket " + ticket + " — /litematica cancel " + ticket + " to abort",
                 NamedTextColor.AQUA));
@@ -303,7 +304,7 @@ public final class LitematicaCommands {
                 return;
             }
 
-            PasteOperation op = new PasteOperation(plugin, schem, opts);
+            PasteOperation op = new PasteOperation(plugin, schem, opts, auditActor);
             activeOps.put(ticket, op);
             CompletableFuture<fr.ekaii.litematica.paste.PasteResult> future = op.execute();
 

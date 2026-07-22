@@ -1,9 +1,11 @@
 package fr.ekaii.litematica.paste;
 
+import fr.ekaii.litematica.LitematicaFolia;
 import fr.ekaii.litematica.core.BlockStateEntry;
 import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.core.LitematicRegion;
 import fr.ekaii.litematica.core.LitematicSchematic;
+import fr.ekaii.litematica.integration.BlockChangeLogger;
 import fr.ekaii.litematica.nms.NmsBridge;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -129,6 +131,8 @@ public final class PasteOperation {
     private final LitematicSchematic schematic;
     private final PasteOptions options;
     private final NmsBridge nms;
+    private final String actorName;
+    private final BlockChangeLogger blockChangeLogger;
 
     /**
      * Off-region executor for the pass-2 and physics-sweep dispatch loops
@@ -161,10 +165,20 @@ public final class PasteOperation {
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
     public PasteOperation(Plugin plugin, LitematicSchematic schematic, PasteOptions options) {
+        this(plugin, schematic, options, "#litematica");
+    }
+
+    public PasteOperation(Plugin plugin, LitematicSchematic schematic, PasteOptions options,
+                          String actorName) {
         this.plugin = plugin;
         this.schematic = schematic;
         this.options = options;
         this.nms = NmsBridge.get();
+        this.actorName = actorName == null || actorName.isBlank() ? "#litematica" : actorName;
+        LitematicaFolia owner = LitematicaFolia.get();
+        this.blockChangeLogger = owner == null
+                ? BlockChangeLogger.noOp()
+                : owner.getBlockChangeLogger();
         this.offRegionExecutor = command -> FoliaCompat.runAsync(plugin, command);
     }
 
@@ -630,9 +644,28 @@ public final class PasteOperation {
             }
             try {
                 Block b = world.getBlockAt(pw.x, pw.y, pw.z);
+                BlockState before = null;
+                if (blockChangeLogger.isEnabled()) {
+                    try {
+                        before = b.getState();
+                    } catch (Throwable snapshotFailure) {
+                        // Report the audit failure through the fail-open hook,
+                        // but do not prevent the existing block write.
+                        blockChangeLogger.logBlockChange(actorName, null, null);
+                    }
+                }
                 // Bukkit overload: setBlockData(data, applyPhysics) — applyPhysics=false to defer.
                 b.setBlockData(pw.data, !options.deferredPhysics());
                 counter.incrementAndGet();
+                if (before != null) {
+                    BlockState after = null;
+                    try {
+                        after = b.getState();
+                    } catch (Throwable snapshotFailure) {
+                        // The hook handles this as a logging-only failure.
+                    }
+                    blockChangeLogger.logBlockChange(actorName, before, after);
+                }
                 if (dbgFirst) {
                     dbgFirst = false;
                     String readBack;

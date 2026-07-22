@@ -14,6 +14,9 @@ java {
 }
 
 repositories {
+    maven("https://maven.playpro.com") {
+        content { includeGroup("net.coreprotect") }
+    }
     maven("https://maven.enginehub.org/repo/") {
         content {
             includeGroup("com.sk89q.worldedit")
@@ -34,6 +37,9 @@ repositories {
 dependencies {
     paperweight.paperDevBundle("26.2.build.62-beta")
     compileOnly(libs.luckperms)
+    // Optional runtime hook. CoreProtect is supplied by the server and is
+    // never bundled into the plugin jar.
+    compileOnly("net.coreprotect:coreprotect:24.0")
     // PacketEvents — required by EasyPlaceListener (P13). Shaded into the
     // final fat jar so end users don't need to install PacketEvents as a
     // separate plugin. PacketEvents 2.6+ supports Folia per upstream
@@ -105,5 +111,6 @@ tasks {
 
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testImplementation("net.coreprotect:coreprotect:24.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

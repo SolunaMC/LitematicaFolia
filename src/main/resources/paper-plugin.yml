@@ -6,6 +6,12 @@ authors: ["exo"]
 api-version: "${apiVersion}"
 folia-supported: true
 load: STARTUP
+dependencies:
+  server:
+    CoreProtect:
+      load: BEFORE
+      required: false
+      join-classpath: true
 permissions:
   litematica.use:
     description: Base permission to use the plugin
