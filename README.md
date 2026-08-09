@@ -1,14 +1,14 @@
 # LitematicaFolia
 
-**Server-side Litematica for Paper and Folia.** Load `.litematic` schematics directly on your Minecraft server, paste them with full block-state, tile-entity and entity fidelity, and accept Direct-Paste uploads from vanilla [Litematica](https://github.com/maruohon/litematica) clients via the [Servux](https://github.com/sakura-ryoko/servux) plugin-message protocol — no `/fill` spam, no kick-for-spamming, no `WorldEdit` dependency.
+**Server-side Litematica for Paper and Folia.** Load `.litematic` schematics directly on your Minecraft server, paste them with full block-state, tile-entity and entity fidelity, and accept Direct-Paste uploads from vanilla [Litematica](https://github.com/maruohon/litematica) clients via the [Servux](https://github.com/sakura-ryoko/servux) plugin-message protocol: no `/fill` spam, no kick-for-spamming, no `WorldEdit` dependency.
 
 [![release](https://img.shields.io/badge/release-v0.5.1-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases) [![mc](https://img.shields.io/badge/Minecraft-26.2-blue)](https://papermc.io/) [![api](https://img.shields.io/badge/Paper%20API-26.2-blue)](https://papermc.io/) [![folia](https://img.shields.io/badge/Folia-supported-purple)](https://papermc.io/software/folia) [![jdk](https://img.shields.io/badge/JDK-25-orange)](https://openjdk.org/) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > First Paper/Folia plugin to natively parse and paste `.litematic`. Replaces the legacy Litematica `/setblock` + `/fill` fallback (slow, lossy, kick-prone) with a real server-side pipeline.
 
-**What's new in 0.5.1** — Direct Paste now works reliably on Leaves-lineage 26.2 servers (Lophine, Leaves, …): these servers ship their own in-core Servux protocol handling that used to swallow the plugin's `servux:*` channels, leaving client uploads hanging forever. The plugin now reclaims its channels automatically at startup — no config change needed, and a clean no-op on plain Paper/Folia/Luminol.
+**What's new in 0.5.1**: Direct Paste now works reliably on Leaves-lineage 26.2 servers (Lophine, Leaves, …): these servers ship their own in-core Servux protocol handling that used to swallow the plugin's `servux:*` channels, leaving client uploads hanging forever. The plugin now reclaims its channels automatically at startup; no config change needed, and a clean no-op on plain Paper/Folia/Luminol.
 
-**Tested on**: Paper 26.2 (build 62 — boot + paste), Folia 26.2 (built from `ver/26.2.x` source, no upstream build published yet — boot + full Servux Direct-Paste end-to-end), and Lophine 26.2 (production, channel-reclaim path).
+**Tested on**: Paper 26.2 (build 62, boot + paste), Folia 26.2 (built from `ver/26.2.x` source, no upstream build published yet; boot + full Servux Direct-Paste end-to-end), and Lophine 26.2 (production, channel-reclaim path).
 
 ---
 
@@ -16,26 +16,26 @@
 
 [Litematica](https://github.com/maruohon/litematica) is a **client-only** Fabric mod. Its companion server tooling ([Servux](https://github.com/sakura-ryoko/servux), [Syncmatica](https://github.com/sakura-ryoko/syncmatica)) is Fabric-only. On Paper/Bukkit servers the only available client behaviour is the `/setblock`-spam fallback, which is:
 
-- **lossy** — no tile-entity NBT, no entities, no pending block ticks
-- **slow** — chat-command rate limit caps it at ~20 blocks/sec
-- **fragile** — Paper kicks for spamming after 30+ commands/second
+- **lossy**: no tile-entity NBT, no entities, no pending block ticks
+- **slow**: chat-command rate limit caps it at ~20 blocks/sec
+- **fragile**: Paper kicks for spamming after 30+ commands/second
 
 **LitematicaFolia** is the missing piece for the Paper side of the wall. It:
 
 1. Reads `.litematic` files server-side via an inline NBT parser (no external dep)
-2. Pastes them via Folia's `RegionScheduler` per-chunk dispatch — observers-last, deferred-physics, full TE and entity NBT
-3. Speaks the [Servux](https://github.com/sakura-ryoko/servux) wire protocol so vanilla Litematica clients can Direct-Paste their in-memory schematics directly to the server — same way it works on a Fabric+Servux server
+2. Pastes them via Folia's `RegionScheduler` per-chunk dispatch: observers-last, deferred-physics, full TE and entity NBT
+3. Speaks the [Servux](https://github.com/sakura-ryoko/servux) wire protocol so vanilla Litematica clients can Direct-Paste their in-memory schematics directly to the server, the same way it works on a Fabric+Servux server
 
 ## Features
 
 - ✅ Native `.litematic` v6/v7 reader and writer (NBT-gzipped, compact cross-word packing, multi-region, palette resolution)
-- ✅ Folia-safe paste — per-chunk `RegionScheduler.run`, observers/pistons placed in a second pass, full TileEntity + Entity + PendingBlockTick + PendingFluidTick NBT preserved
-- ✅ **Servux Direct Paste** — vanilla Litematica clients can paste from their schematic GUI directly to the server, no `/fill` spam (validated against `litematica-fabric-1.21.11-0.27.6`)
-- ✅ DataFixerUpper bridge — older `.litematic` (1.16.5+) are upgraded to the current MC version at paste time
-- ✅ Brigadier commands — `/litematica paste|save|materials|list|info|reload|cancel` with permission-gated subcommands
-- ✅ Production stress-tested — 4.2M blocks pasted in **9.5 seconds**, 870k blocks + 6,500 tile entities via Direct Paste in **5.6 seconds**, zero region-file corruption
+- ✅ Folia-safe paste: per-chunk `RegionScheduler.run`, observers/pistons placed in a second pass, full TileEntity + Entity + PendingBlockTick + PendingFluidTick NBT preserved
+- ✅ **Servux Direct Paste**: vanilla Litematica clients can paste from their schematic GUI directly to the server, no `/fill` spam (validated against `litematica-fabric-1.21.11-0.27.6`)
+- ✅ DataFixerUpper bridge: older `.litematic` (1.16.5+) are upgraded to the current MC version at paste time
+- ✅ Brigadier commands: `/litematica paste|save|materials|list|info|reload|cancel` with permission-gated subcommands
+- ✅ Production stress-tested: 4.2M blocks pasted in **9.5 seconds**, 870k blocks + 6,500 tile entities via Direct Paste in **5.6 seconds**, zero region-file corruption
 - ✅ Configurable splitter cap (default 128 MiB) so 40 MiB+ schematics go through without rejection
-- ✅ **CoreProtect integration** — pasted block changes are logged under the player who ran the paste (`#litematica` for console), with WorldEdit-style removal+placement semantics so `/co rollback` works. Fully optional: no CoreProtect, no overhead. Contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen)
+- ✅ **CoreProtect integration**: pasted block changes are logged under the player who ran the paste (`#litematica` for console), with WorldEdit-style removal+placement semantics so `/co rollback` works. Fully optional: no CoreProtect, no overhead. Contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen)
 
 ## Installation
 
@@ -51,12 +51,12 @@ Requirements:
 
 | | |
 |---|---|
-| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Purpur 26.2+) — for 26.1.x use the 0.4.x releases |
+| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Purpur 26.2+); for 26.1.x use the 0.4.x releases |
 | Java | JDK 25 |
 | API version | 26.2 |
 | Optional | LuckPerms (perm gating), FastAsyncWorldEdit (future ClipboardFormat adapter) |
 
-## Client setup — Litematica Direct Paste
+## Client setup: Litematica Direct Paste
 
 For players to paste directly from their own client (no admin upload), they need:
 
@@ -90,7 +90,7 @@ Then bind **`executeOperation`** to a free key in **Configs → Hotkeys** (defau
 1. Open Litematica menu (`M` by default)
 2. **Load Schematics** → pick your `.litematic`
 3. **Loaded Schematics** → **Create Placement** → position it
-4. Hold the Litematica tool item (a stick — set via Tool Item hotkey)
+4. Hold the Litematica tool item (a stick, set via Tool Item hotkey)
 5. **Tool Mode: Paste Schematic in world** (cycle if needed)
 6. Aim at the placement and press your `executeOperation` keybind
 
@@ -100,11 +100,11 @@ Direct Paste flies via the `servux:litematics` channel. Server logs:
 paste complete: 869514 blocks, 6516 TE, 0 entities, 0 err in 5747ms
 ```
 
-## Server admin — Leaves-lineage servers (Lophine, Leaves, …)
+## Server admin: Leaves-lineage servers (Lophine, Leaves, …)
 
 Leaves-based servers (including **Lophine**, the Luminol downstream) implement
 the Servux protocol **in the server core** and consume every `servux:*`
-custom-payload before Bukkit plugins can see it — even with the
+custom-payload before Bukkit plugins can see it, even with the
 `[function.protocol.servux]` toggles off in `lophine_global_config.toml`.
 Symptom (through 0.5.0): Litematica clients hang on *"The placement is being
 uploaded to Servux for pasting"* with zero server-side logs.
@@ -116,7 +116,7 @@ on plain Paper/Folia. On non-Leaves servers this is a clean no-op; if the
 reclaim ever fails, the plugin logs a SEVERE line telling you so instead of
 failing silently.
 
-## Server admin — Velocity proxy tuning
+## Server admin: Velocity proxy tuning
 
 If your players connect through a Velocity proxy, **two gotchas** kick Direct Paste uploads:
 
@@ -128,11 +128,11 @@ If your players connect through a Velocity proxy, **two gotchas** kick Direct Pa
 decompressed-bytes-per-second = -1   # default 5 MiB/s, kicks burst paste
 ```
 
-A 41 MiB schematic streamed in 2s = 20 MB/s of decompressed bytes — kicks at the 5 MiB/s default. Set to `-1` (or a high number like `104857600` if you want a sanity cap) and restart Velocity.
+A 41 MiB schematic streamed in 2s = 20 MB/s of decompressed bytes, which kicks at the 5 MiB/s default. Set to `-1` (or a high number like `104857600` if you want a sanity cap) and restart Velocity.
 
 ### 2. Velocity 3.5 compression-threshold
 
-Leave it at the default (`256`). **Do NOT** set to `-1` or to a value above 16 KiB — that disables chunk-data compression and tanks normal play. The old 64× zip-bomb ratio check in Velocity 597 has been removed in build 599+; you don't need to fight it.
+Leave it at the default (`256`). **Do NOT** set to `-1` or to a value above 16 KiB; that disables chunk-data compression and tanks normal play. The old 64× zip-bomb ratio check in Velocity 597 has been removed in build 599+; you don't need to fight it.
 
 ### 3. Paper keep-alive timeout
 
@@ -174,9 +174,9 @@ paste:
   minDataVersion: 2586               # reject schematics older than MC 1.16.5
 
 protocol:
-  enableServuxBridge: false          # OFF by default — flip to true to enable Direct Paste
+  enableServuxBridge: false          # OFF by default; flip to true to enable Direct Paste
   enableEasyPlace: false             # Easy Place V3 server-side (PacketEvents)
-  maxDirectPasteSize: 134217728      # 128 MiB — raise if you stream 32M+ block schematics
+  maxDirectPasteSize: 134217728      # 128 MiB; raise if you stream 32M+ block schematics
 
 logging:
   coreprotect: true                  # log paste block changes to CoreProtect (if installed)
@@ -184,16 +184,16 @@ logging:
 
 ### CoreProtect notes
 
-- Needs CoreProtect **API v10+** (any recent build). The plugin prints the detected API version at startup and falls back to a clean no-op if CoreProtect is missing, too old, or fails mid-paste — auditing never breaks a paste.
-- On MC 26.2 you need a CoreProtect build that actually accepts 26.2 — stock CE 24.0 predates it and disables itself at boot ("Minecraft 26.2 is not supported"). The integration then stays dormant, pastes are unaffected.
+- Needs CoreProtect **API v10+** (any recent build). The plugin prints the detected API version at startup and falls back to a clean no-op if CoreProtect is missing, too old, or fails mid-paste; auditing never breaks a paste.
+- On MC 26.2 you need a CoreProtect build that actually accepts 26.2: stock CE 24.0 predates it and disables itself at boot ("Minecraft 26.2 is not supported"). The integration then stays dormant, pastes are unaffected.
 - Tile-entity NBT and entities are not logged (block states only).
 - Budget for it on giant pastes: a 4.2M-block paste went from 5.4 s to 7.1 s with logging on, and CoreProtect's consumer queue transiently holds one entry per block. Set `logging.coreprotect: false` if you'd rather paste without records.
 
 ## Limitations and known issues
 
-- **`/litematica save` is blocks-only for now.** Saved regions are origin-normalized since 0.5.0 (re-pasting a saved file lands exactly at the coordinates you give it), and the paste/save coordinate contract is guarded by a round-trip smoke test — but TileEntity / Entity / PendingTick capture on save is still on the roadmap. Workaround: use Litematica's Save Area on the client.
+- **`/litematica save` is blocks-only for now.** Saved regions are origin-normalized since 0.5.0 (re-pasting a saved file lands exactly at the coordinates you give it), and the paste/save coordinate contract is guarded by a round-trip smoke test, but TileEntity / Entity / PendingTick capture on save is still on the roadmap. Workaround: use Litematica's Save Area on the client.
 - **Direct Paste size cap = client-side limited.** Litematica's `sliceForServux` threshold is 64 MiB NBT; above that it uses a multi-frame Transmit protocol (our handler supports it, untested at scale).
-- **Easy Place V3 is gated off by default.** The bundled PacketEvents is now 2.13.0 (parses 26.2-era server version strings), but the server-side block-state override path has not been exercised at scale. Code is there — `protocol.enableEasyPlace: true` at your own risk.
+- **Easy Place V3 is gated off by default.** The bundled PacketEvents is now 2.13.0 (parses 26.2-era server version strings), but the server-side block-state override path has not been exercised at scale. Code is there; `protocol.enableEasyPlace: true` at your own risk.
 - **FAWE ClipboardFormat adapter is stubbed.** The FAWE Maven repository (`mvn.intellectualsites.com`) has been unreachable across releases; the adapter will return when the upstream repo is.
 
 ## How does it compare?
@@ -229,7 +229,7 @@ The wire format is documented byte-for-byte in [`SERVUX_WIRE_FORMAT.md`](SERVUX_
 
 ## License
 
-[MIT](LICENSE). LitematicaFolia is an original implementation — no upstream code copied; LGPL clean. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`).
+[MIT](LICENSE). LitematicaFolia is an original implementation: no upstream code copied; LGPL clean. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`).
 
 ## Credits
 
@@ -237,7 +237,7 @@ Made by **exo** for the [ekaii](https://ekaii.fr) Minecraft network. Built on to
 
 Litematica is by [maruohon](https://github.com/maruohon). Servux protocol by [sakura-ryoko](https://github.com/sakura-ryoko). Without their work this plugin would not exist.
 
-CoreProtect paste logging contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen) — first external contribution to this project, and a clean one.
+CoreProtect paste logging contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen), the first external contribution to this project, and a clean one.
 
 ## Links
 
