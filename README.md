@@ -35,6 +35,7 @@
 - ✅ Brigadier commands — `/litematica paste|save|materials|list|info|reload|cancel` with permission-gated subcommands
 - ✅ Production stress-tested — 4.2M blocks pasted in **9.5 seconds**, 870k blocks + 6,500 tile entities via Direct Paste in **5.6 seconds**, zero region-file corruption
 - ✅ Configurable splitter cap (default 128 MiB) so 40 MiB+ schematics go through without rejection
+- ✅ **CoreProtect integration** — pasted block changes are logged under the player who ran the paste (`#litematica` for console), with WorldEdit-style removal+placement semantics so `/co rollback` works. Fully optional: no CoreProtect, no overhead. Contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen)
 
 ## Installation
 
@@ -176,7 +177,17 @@ protocol:
   enableServuxBridge: false          # OFF by default — flip to true to enable Direct Paste
   enableEasyPlace: false             # Easy Place V3 server-side (PacketEvents)
   maxDirectPasteSize: 134217728      # 128 MiB — raise if you stream 32M+ block schematics
+
+logging:
+  coreprotect: true                  # log paste block changes to CoreProtect (if installed)
 ```
+
+### CoreProtect notes
+
+- Needs CoreProtect **API v10+** (any recent build). The plugin prints the detected API version at startup and falls back to a clean no-op if CoreProtect is missing, too old, or fails mid-paste — auditing never breaks a paste.
+- On MC 26.2 you need a CoreProtect build that actually accepts 26.2 — stock CE 24.0 predates it and disables itself at boot ("Minecraft 26.2 is not supported"). The integration then stays dormant, pastes are unaffected.
+- Tile-entity NBT and entities are not logged (block states only).
+- Budget for it on giant pastes: a 4.2M-block paste went from 5.4 s to 7.1 s with logging on, and CoreProtect's consumer queue transiently holds one entry per block. Set `logging.coreprotect: false` if you'd rather paste without records.
 
 ## Limitations and known issues
 
@@ -225,6 +236,8 @@ The wire format is documented byte-for-byte in [`SERVUX_WIRE_FORMAT.md`](SERVUX_
 Made by **exo** for the [ekaii](https://ekaii.fr) Minecraft network. Built on top of the patterns established by [Moulberry/AxiomPaperPlugin](https://github.com/Moulberry/AxiomPaperPlugin) (Folia paste scheduler) and [PaperMC/Paper](https://papermc.io) (the only sane MC server).
 
 Litematica is by [maruohon](https://github.com/maruohon). Servux protocol by [sakura-ryoko](https://github.com/sakura-ryoko). Without their work this plugin would not exist.
+
+CoreProtect paste logging contributed by [UPSOKen](https://forgejo.ekaii.fr/UPSOKen) — first external contribution to this project, and a clean one.
 
 ## Links
 
