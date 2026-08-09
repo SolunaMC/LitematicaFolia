@@ -59,3 +59,13 @@ fawe:
   # Register a FAWE ClipboardFormat for .litematic when FAWE is detected.
   # Allows //schem load file.litematic in FAWE.
   registerClipboardFormat: true
+
+logging:
+  # Record pasted block changes in CoreProtect when it is installed, under
+  # the player who started the paste (console/RCON pastes log as
+  # "#litematica"). Replacements follow WorldEdit semantics: one removal of
+  # the old block, then one placement of the new one. Rollback works.
+  # Cost: on multi-million-block pastes expect the paste to run ~30% longer
+  # and CoreProtect's consumer queue to grow by one entry per changed block.
+  # Set false to paste without leaving CoreProtect records.
+  coreprotect: true

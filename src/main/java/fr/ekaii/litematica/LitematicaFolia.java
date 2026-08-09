@@ -181,6 +181,11 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     }
 
     private void initializeBlockChangeLogger(Plugin coreProtect) {
+        if (!getConfig().getBoolean("logging.coreprotect", true)) {
+            getLogger().info("CoreProtect paste block logging disabled by config (logging.coreprotect: false).");
+            blockChangeLogger = BlockChangeLogger.noOp();
+            return;
+        }
         if (coreProtect == null) {
             getLogger().info("CoreProtect not found yet; paste block logging will activate if it becomes available.");
             blockChangeLogger = BlockChangeLogger.noOp();
