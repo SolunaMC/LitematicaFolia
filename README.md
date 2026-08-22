@@ -51,10 +51,12 @@ Requirements:
 
 | | |
 |---|---|
-| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Purpur 26.2+); for 26.1.x use the 0.4.x releases |
+| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Leaves, Purpur 26.2+); for 26.1.x use the 0.4.x releases |
 | Java | JDK 25 |
 | API version | 26.2 |
 | Optional | LuckPerms (perm gating), FastAsyncWorldEdit (future ClipboardFormat adapter) |
+
+> **Version gate (since 0.6.1)**: Bukkit does not stop a too-new plugin from loading, so on anything that is not Minecraft 26.2 the plugin now logs a SEVERE and disables itself instead of running blind. **1.21.x servers (including Leaves 1.21.11) are not supported by any release**: 0.5+/0.6 target 26.2 and 0.4.x targets 26.1.x. Running the 26.2 build on a 1.21.11 server used to inject a mismatched packet pipeline into every connection and could break all client joins (issue #3).
 
 ## Client setup: Litematica Direct Paste
 

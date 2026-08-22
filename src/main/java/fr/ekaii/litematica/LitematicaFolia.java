@@ -17,7 +17,9 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     private static LitematicaFolia instance;
     private fr.ekaii.litematica.protocol.ServuxBridge servuxBridge;
     private fr.ekaii.litematica.protocol.easyplace.EasyPlaceListener easyPlaceListener;
+    private boolean supportedServer;
     private boolean packetEventsLoaded;
+    private boolean packetEventsInited;
     private volatile BlockChangeLogger blockChangeLogger = BlockChangeLogger.noOp();
 
     public static LitematicaFolia get() {
@@ -32,8 +34,29 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         return blockChangeLogger;
     }
 
+    /**
+     * This build drives NMS through NmsBridge26_2 and ships PacketEvents
+     * mapped for the 26.2 wire, so it must refuse to run anywhere else.
+     * Bukkit's api-version does NOT reject a plugin NEWER than the server
+     * (Paper and Leaves 1.21.11 both enable this 26.2 build without a
+     * complaint), and a version-mismatched packet pipeline corrupts client
+     * connections instead of failing cleanly (issue #3: every join on a
+     * Leaves 1.21.11 server died on a garbage clientbound packet).
+     */
+    private static boolean isSupportedServerVersion(String mc) {
+        return mc.equals("26.2") || mc.startsWith("26.2.");
+    }
+
     @Override
     public void onLoad() {
+        supportedServer = isSupportedServerVersion(getServer().getMinecraftVersion());
+        if (!supportedServer) {
+            getLogger().severe("Unsupported Minecraft version " + getServer().getMinecraftVersion()
+                    + ": this build supports 26.2 only. Use the 0.4.x releases for 26.1.x;"
+                    + " 1.21.x and older are not supported at all. PacketEvents stays out of the"
+                    + " pipeline and the plugin will disable itself on enable.");
+            return;
+        }
         // PacketEvents must be set up in onLoad so its packet listeners
         // can be wired before any player connects. Guarded — a missing
         // PacketEvents class (relocation gone wrong on a weird
@@ -56,6 +79,15 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
+        if (!supportedServer) {
+            getLogger().severe("LitematicaFolia " + getPluginMeta().getVersion()
+                    + " does not support Minecraft " + getServer().getMinecraftVersion()
+                    + ". Supported: 26.2 (this build). For 26.1.x use the 0.4.x releases;"
+                    + " 1.21.x and older are unsupported. Disabling to avoid breaking client"
+                    + " connections.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         instance = this;
         saveDefaultConfig();
         initializeBlockChangeLogger();
@@ -71,20 +103,22 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
 
         // Easy Place V3 server-side via PacketEvents. Gated by
-        // protocol.enableEasyPlace (default false). PacketEvents must be
-        // init'd regardless of whether the Easy Place listener is
-        // registered, because once load() succeeded the api expects a
-        // matching init/terminate pair.
-        if (packetEventsLoaded) {
+        // protocol.enableEasyPlace (default false). init() is what injects
+        // PacketEvents into every connection's netty pipeline, and Easy
+        // Place is the ONLY consumer, so we no longer init when the
+        // feature is off: the Servux bridge runs on the Bukkit Messenger
+        // alone and a dormant pipeline injector is pure risk (issue #3).
+        // terminate() in onDisable is gated on packetEventsInited to match.
+        boolean easyPlaceWanted = getConfig().getBoolean("protocol.enableEasyPlace", false);
+        if (packetEventsLoaded && easyPlaceWanted) {
             try {
                 PacketEvents.getAPI().init();
+                packetEventsInited = true;
             } catch (Throwable t) {
                 getLogger().warning("PacketEvents init failed: " + t);
-                packetEventsLoaded = false;
             }
         }
-        if (packetEventsLoaded
-                && getConfig().getBoolean("protocol.enableEasyPlace", false)) {
+        if (packetEventsInited) {
             try {
                 easyPlaceListener =
                         new fr.ekaii.litematica.protocol.easyplace.EasyPlaceListener(this);
@@ -95,8 +129,10 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
                 getLogger().warning("Easy Place V3 listener registration failed: " + t);
                 easyPlaceListener = null;
             }
-        } else if (packetEventsLoaded) {
-            getLogger().info("Easy Place V3 listener disabled (protocol.enableEasyPlace=false).");
+        } else if (easyPlaceWanted) {
+            getLogger().warning("Easy Place V3 requested but PacketEvents is unavailable; feature stays off.");
+        } else {
+            getLogger().info("Easy Place V3 listener disabled (protocol.enableEasyPlace=false); PacketEvents left uninjected.");
         }
         getLogger().info("LitematicaFolia ready.");
     }
@@ -161,10 +197,11 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
             try { servuxBridge.disable(); } catch (Throwable ignored) {}
             servuxBridge = null;
         }
-        if (packetEventsLoaded) {
+        if (packetEventsInited) {
             try { PacketEvents.getAPI().terminate(); } catch (Throwable ignored) {}
-            packetEventsLoaded = false;
+            packetEventsInited = false;
         }
+        packetEventsLoaded = false;
         easyPlaceListener = null;
         blockChangeLogger = BlockChangeLogger.noOp();
         instance = null;

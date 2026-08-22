@@ -2,6 +2,46 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.6.1+26.2 - 2026-08-22
+
+### Fixed - refuse to run on unsupported server versions (issue #3)
+
+- **Root cause**: Bukkit's `api-version` does not reject a plugin that is
+  NEWER than the server. Verified empirically: Paper 1.21.11 and Leaves
+  1.21.11 both load and enable the `api-version: "26.2"` jar without a
+  complaint. The plugin then ran on a Minecraft version it was never built
+  for, and unconditionally called `PacketEvents.getAPI().init()`, injecting
+  a 26.2-mapped packet pipeline into every connection of a protocol-774
+  server. On the reporter's Leaves 1.21.11 setup (26.1.2 clients joining
+  through a Via translation layer) every join died on a corrupted
+  clientbound packet: the client decoded a garbage frame as
+  `minecraft:debug/event` with a debug-subscription registry id (100) that
+  no version of the game defines (the registry has 16 entries in 1.21.11,
+  26.1.2 and 26.2 alike).
+- **Fix 1**: hard server-version gate. `onLoad` checks
+  `Server#getMinecraftVersion()` against the supported 26.2 line; on any
+  other version the plugin logs a SEVERE explaining what to install
+  (0.4.x for 26.1.x, nothing for 1.21.x and older), skips PacketEvents
+  entirely, and disables itself in `onEnable`. Joins on the unsupported
+  server are untouched.
+- **Fix 2**: PacketEvents is now initialized (= injected into the netty
+  pipeline) only when `protocol.enableEasyPlace: true`. Easy Place is its
+  only consumer; the Servux bridge runs entirely on the Bukkit Messenger.
+  Servers with Easy Place off no longer carry a dormant pipeline injector.
+  `terminate()` is correspondingly gated so disable stays balanced.
+
+## 0.6.0+26.2 - 2026-08-09
+
+### Added - CoreProtect paste logging (first external contribution)
+
+- Optional CoreProtect integration (PR #2 by UPSOKen): pasted block changes
+  are logged under the initiating player (`#litematica` for console) with
+  WorldEdit-style removal-then-placement semantics, so `/co rollback`
+  works on pastes. Fail-open everywhere, lazy classload (no-CP servers
+  never touch CP classes), `PluginEnableEvent` retry for the STARTUP vs
+  POSTWORLD enable-order gap. Config toggle `logging.coreprotect`
+  (default true). Dev bundle bumped to `26.2.build.111-stable`.
+
 ## 0.5.1+26.2 — 2026-07-18
 
 ### Fixed — Servux paste swallowed by Leaves-derived bases (Lophine)
