@@ -287,3 +287,113 @@ agreement on protocol revision.
    a custom channel either — Easy Place uses the vanilla
    `ServerboundUseItemOnPacket`'s held item. Our previous "item NBT
    blob in EasyPlaceRequest" design was unconstrained by upstream.
+
+---
+
+# Wire v2: the 26.2-0.11.3 / Litematica 26.2-0.28.5 "Data Tag" protocol
+
+> Added 2026-08-25. Reverse-engineered from upstream source diffs
+> `sakura-ryoko/servux 26.2-0.11.1..26.2-0.11.3` (the whole change is
+> commit `a24b3a3`, "network protocol overhaul ... Introduce Compressed
+> Data Tag Packets ... Hard network backwards compat breakage") and
+> `sakura-ryoko/litematica 26.2-0.28.3..26.2-0.28.5`. Wire facts only,
+> no code copied. Everything ABOVE this line describes wire v1 and
+> remains correct for clients <= 26.2-0.28.4.
+
+## Protocol version
+
+`ServuxLitematicaPacket.PROTOCOL_VERSION`: 1 -> **2**.
+
+## Data Tag blob (replaces vanilla network NBT in most payloads)
+
+```
+blob := Int32(bodyLength, big-endian) ++ body
+body := gzip( nbtFileStream )                 // writer ALWAYS gzips
+nbtFileStream := [tagId=10][writeUTF(rootName="")][compound payload]
+```
+
+- Byte-identical to the classic NBT FILE format (named root,
+  `writeUTF` names) gzipped — what `NbtIo.writeCompressed` produces
+  with an empty root name. Verified against upstream
+  `DataByteBufUtils` / `DataFileUtils` / every `*Data.write()`
+  (standard tag ids 0..12).
+- Reader tolerates an uncompressed body (ZipException fallback);
+  a TAG_END root byte means "no data".
+
+## Packet table changes (`servux:litematics`)
+
+| ID | Change |
+| -- | ------ |
+| 1, 2 | unchanged encoding (vanilla network NBT); new handshake content below |
+| 3  | transactionId VarInt REMOVED — payload is the packed BlockPos only |
+| 4  | transactionId VarInt REMOVED — payload is VarInt(entityId) only |
+| 5, 6 | trailing NBT replaced by a Data Tag blob |
+| 7  | trailing NBT replaced by a Data Tag blob |
+| 8  | NEW `PACKET_C2S_UNREGISTER_REPLY` — Data Tag blob (often empty) |
+| 11, 13 | unchanged splitter framing; the REASSEMBLED payload changed (below) |
+| 14 | NEW `PACKET_C2S_TASK_REQUEST` — Data Tag blob, `Task` = "Fill"/"Delete" |
+| 15 | NEW `PACKET_S2C_TASK_RESPONSE` — reserved (client receive path still TODO upstream) |
+| 16 | NEW `PACKET_S2C_TASK_STATUS_SYNC` — Data Tag blob (InfoHudSync, below) |
+| 17 | NEW `PACKET_C2S_TASK_CANCEL` — Data Tag blob (server handler still TODO upstream) |
+
+## Handshake / registration
+
+- v2 client request (type 2, vanilla NBT): `{version: Int 2}`.
+  v1 clients sent `{version: String MOD_STRING}` — the TAG TYPE of
+  `version` discriminates the era.
+- Upstream server denies registration when `version` (as Int) < 2.
+- v2 client validates the reply hard
+  (`EntityDataManager.receiveServuxMetadata`): requires `version == 2`
+  AND `servux.startsWith("servux-fabric-" + MC_VERSION)`; on mismatch
+  it unregisters (sending type 8 if version > 2) and FLIPS OFF its own
+  entityDataSync config. Our reply to v2 clients is therefore
+  `version=2` + `servux-fabric-<mcver>-0.11.3+LitematicaFolia-...`.
+- v1 clients only warn on mismatch (no behavior change).
+
+## Direct Paste (the break that killed 0.6.x pastes)
+
+- v1 reassembled type-13 payload: `VarInt(transactionId) + vanilla NBT`.
+- v2 reassembled type-13 payload: **one Data Tag blob, no transactionId**.
+- 0.28.5 sends the WHOLE placement inline (no more
+  Litematic-TransmitStart/Data/End — that sub-protocol is commented out
+  upstream in both directions): `SchematicPlacement.toData(true)` +
+  `Task="LitematicaPaste"` + `Interval=1`:
+
+| Key | Type | Meaning |
+| --- | ---- | ------- |
+| `Name` / `HashCode` | String | placement name / UUID |
+| `Schematics` | Compound | full .litematic root (Version, MinecraftDataVersion, Metadata, Regions) |
+| `Origin` | IntArray[3] | placement origin |
+| `Rotation` / `Mirror` | Int | enum ORDINALS (v1 sent Rotation as a String name) |
+| `SubRegions` | Compound | per-region overrides {Pos IntArray, Rotation, Mirror, Name, Enabled, IgnoreEntities} |
+| `ReplaceMode` / `PasteLayerBehavior` | String | behavior names |
+| `RenderLayerRange` | Compound | LayerRange codec |
+
+- Upstream requires: registered + permissioned + Creative mode; then
+  schedules `TaskPasteSchematicPerChunkDirect` on its Task Scheduler.
+
+## Task status sync (type 16, S2C)
+
+The client arms an `InfoHudSync` when it fires a Servux Paste:
+
+- progress: `{InfoHudComplete: 0b, InfoHudSync: List<{Type: "REMAINING_CHUNKS"|"STRING", Data: List<{n: String, rc: Int, cx: Int, cz: Int}>}>}`
+- completion: `{InfoHudComplete: 1b}` — clears the client HUD entry.
+
+Not required for the paste itself; we send the completion sync to v2
+clients (v1 clients would warn on the unknown type 16).
+
+## Bulk entity reply (v2 schema)
+
+Splitter stream (type 11) whose reassembled payload is a Data Tag blob:
+`{Task:"BulkEntityReply", TileEntities: List<BE tag (embeds x/y/z/id)>,
+Entities: List<entity tag + entityId Int + id String>, chunkX, chunkZ}`.
+
+## v1/v2 disambiguation used by this plugin
+
+1. Negotiated version tracked per player from the type-2 request
+   (both client eras auto-send it on their tick loop).
+2. Reassembled stream sniff: first 4 bytes as big-endian Int32 equal to
+   `length - 4` -> v2 (a v1 payload starts with a VarInt transactionId,
+   making a false positive require a ~200 MB payload).
+3. Type 3: body length 8 = v2, 13 = v1. Type 4: leading VarInt == -1
+   marks the v1 transactionId to drain (entity ids are never negative).
