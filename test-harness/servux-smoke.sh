@@ -28,7 +28,9 @@ PID_FILE="${HARNESS_DIR}/servux.pid"
 LOG_FILE="${SERVER_DIR}/logs/latest.log"
 RCON_LIB="${HARNESS_DIR}/lib/rcon.py"
 
-FIXTURE="${REPO_DIR}/schematics-fixtures/stone-cube-4.litematic"
+# Override with FIXTURE=/path/to/other.litematic (e.g. mixed-room-8 for a
+# tile-entity + multi-slice payload).
+FIXTURE="${FIXTURE:-${REPO_DIR}/schematics-fixtures/stone-cube-4.litematic}"
 PLUGIN_DIR="${SERVER_DIR}/plugins/LitematicaFolia"
 PLUGIN_CONFIG="${PLUGIN_DIR}/config.yml"
 
@@ -40,6 +42,11 @@ RCON_HOST="127.0.0.1"
 PASTE_X=100
 PASTE_Y=64
 PASTE_Z=100
+
+# Servux wire era the bot emulates: v1 = Litematica <= 26.2-0.28.4
+# (vanilla NBT + transactionId), v2 = 26.2-0.28.5+ (Data Tag blobs,
+# metadata {version: Int 2}). Override with WIRE=v1|v2.
+WIRE="${WIRE:-v2}"
 
 BOOT_TIMEOUT_SECS=180
 BOT_HOLD_SECS=15
@@ -275,7 +282,7 @@ if [[ ! -f "${BOT_DIR}/build/ProtocolBot.class" ]]; then
 fi
 
 # -------------------------------------------------------------- 6) run bot
-log "running bot → ${RCON_HOST}:${SERVER_PORT}"
+log "running bot (wire ${WIRE}) → ${RCON_HOST}:${SERVER_PORT}"
 set +e
 "${JAVA_BIN}" \
     -cp "${BOT_DIR}/build:${REPO_DIR}/build/classes/java/main" \
@@ -285,6 +292,7 @@ set +e
     --paste-origin "${PASTE_X},${PASTE_Y},${PASTE_Z}" \
     --username ProtoBot \
     --hold-seconds "${BOT_HOLD_SECS}" \
+    --wire "${WIRE}" \
     >"${BOT_LOG}" 2>&1
 BOT_RC=$?
 set -e
@@ -326,6 +334,14 @@ if grep -F "METADATA OK" "${BOT_LOG}" >/dev/null 2>&1; then
 fi
 log "metadata exchange: ${metadata_ok}"
 
+# v2-only extra assertion: the server must close the client's paste HUD
+# with a TASK_STATUS_SYNC InfoHudComplete once the paste finishes.
+task_sync_ok=0
+if [[ "${WIRE}" == "v2" ]] && grep -F "TASK COMPLETE SYNC OK" "${BOT_LOG}" >/dev/null 2>&1; then
+    task_sync_ok=1
+fi
+log "task complete sync (v2): ${task_sync_ok}"
+
 # Additional verification: probe origin via `/execute if block ... run`.
 # The stone-cube-4 fixture has region.origin=(0, 64, 0), so the actual
 # placement starts at (PASTE_X+0, PASTE_Y+64, PASTE_Z+0) — i.e. PASTE_Y is
@@ -348,7 +364,10 @@ if (( paste_complete >= 1 )); then
     # block already matches, otherwise "block changed".
     block_probe="$(send_rcon "setblock ${probe_x} ${probe_y} ${probe_z} minecraft:stone replace" 2>&1 || true)"
     log "rcon setblock-replace probe @ ${probe_x},${probe_y},${probe_z}: ${block_probe}"
-    if echo "${block_probe}" | grep -qi "no change\|nothing changed\|already"; then
+    # Modern MC returns "Could not set the block" when the target block
+    # already equals the requested state — for this probe that IS the
+    # pass condition (the pasted stone is already there).
+    if echo "${block_probe}" | grep -qi "no change\|nothing changed\|already\|could not set"; then
         block_probe_pass=1
     fi
     send_rcon "forceload remove ${probe_x} ${probe_z}" >/dev/null 2>&1 || true
@@ -356,8 +375,8 @@ fi
 
 # Verdict
 if (( paste_complete >= 1 )); then
-    diag="$(printf 'Servux Direct-Paste verified end-to-end:\n  - bot completed handshake -> login -> config -> play\n  - servux:litematics metadata exchange: %s\n  - server logged %d "paste complete:" line(s)\n  - newest region-file mtime: %s\n  - block probe at expected stone location: %s (returned: %s)\n\nServer last 30 lines:\n%s\n\nBot last 40 lines:\n%s\n' \
-        "${metadata_ok}" "${paste_complete}" "${region_mtime}" \
+    diag="$(printf 'Servux Direct-Paste verified end-to-end (wire %s):\n  - bot completed handshake -> login -> config -> play\n  - servux:litematics metadata exchange: %s\n  - v2 task-complete sync: %s\n  - server logged %d "paste complete:" line(s)\n  - newest region-file mtime: %s\n  - block probe at expected stone location: %s (returned: %s)\n\nServer last 30 lines:\n%s\n\nBot last 40 lines:\n%s\n' \
+        "${WIRE}" "${metadata_ok}" "${task_sync_ok}" "${paste_complete}" "${region_mtime}" \
         "${block_probe_pass}" "${block_probe}" \
         "$(tail -n30 "${LOG_FILE}" 2>/dev/null || true)" \
         "$(tail -n40 "${BOT_LOG}" 2>/dev/null || true)")"
