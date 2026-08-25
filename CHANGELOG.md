@@ -2,6 +2,53 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.7.0+26.2 - 2026-08-25
+
+### Added - Servux wire v2 (Litematica 26.2-0.28.5 "Data Tag" protocol)
+
+- **Why**: Litematica 26.2-0.28.5 (2026-08-20) shipped upstream Servux's
+  "network protocol overhaul" (Servux `26.2-0.11.3`, commit `a24b3a3`) —
+  a hard wire break. The paste stream lost its `VarInt(transactionId)`
+  prefix and switched from vanilla network NBT to gzip-compressed
+  "Data Tag" blobs (`Int32 length + gzip(NBT file stream, empty root
+  name)`); protocol version bumped 1 → 2; the client now hard-validates
+  the metadata reply (`version == 2` AND `servux` starting with
+  `servux-fabric-<mcver>`) and disables its own sync config on mismatch.
+  Result on 0.6.x: Direct Paste silently dead for updated clients.
+- **Data Tag codec** (`DataTagCodec`): encode/decode of the v2 blob
+  framing. The inner serialization is byte-identical to the classic NBT
+  file format, so the existing `LitematicNbt` reader/writer carries it.
+- **Version negotiation** (`ProtocolSessions` + `MetadataHandler`): the
+  metadata request's `version` tag type discriminates the client era
+  (Int >= 2 → v2; String/absent → v1, matching 0.28.4-). Replies mirror
+  the negotiated era: v2 gets `version=2` plus a `servux-fabric-<mcver>`
+  compat string, v1 keeps the legacy 0.5.x reply. Framing sniffs
+  (exact Int32 prefix, `-1` transactionId marker, body length) cover
+  players whose handshake was missed.
+- **Direct Paste v2**: the reassembled type-13 stream is decoded per the
+  negotiated/sniffed era; the 0.28.5 inline `Task=LitematicaPaste`
+  compound (full schematic under `Schematics`, `Origin` IntArray,
+  `Rotation`/`Mirror` as enum ordinals) pastes through the existing
+  Folia-safe `PasteOperation`. On completion the server now sends
+  `S2C_TASK_STATUS_SYNC {InfoHudComplete: 1b}` (v2 clients only) so the
+  client's paste HUD entry closes.
+- **New packet types routed**: `C2S_UNREGISTER_REPLY` (8) clears the
+  player's protocol state; `C2S_TASK_REQUEST` (14, Fill/Delete) and
+  `C2S_TASK_CANCEL` (17) are acknowledged with a polite unsupported
+  notice instead of an "unknown packet" warning.
+- **Entity-sync replies era-matched**: block-entity / entity / bulk NBT
+  replies encode as Data Tag blobs for v2 clients (bulk uses the
+  upstream `BulkEntityReply` schema) and stay vanilla NBT for v1;
+  requests decode both shapes (transactionId present or not).
+- **Backward compatible**: v1 clients (<= 26.2-0.28.4) keep the exact
+  0.6.x behavior; both eras verified end-to-end by the extended
+  `ProtocolBot` harness (`WIRE=v1|v2 test-harness/servux-smoke.sh`)
+  against Paper 26.2.
+- Full reverse-engineered delta: see PROTOCOL-DELTA notes in
+  `SERVUX_WIRE_FORMAT.md` (v2 section) — derived from upstream source
+  diffs `26.2-0.11.1..26.2-0.11.3` and `26.2-0.28.3..26.2-0.28.5`; no
+  upstream code copied.
+
 ## 0.6.1+26.2 - 2026-08-22
 
 ### Fixed - refuse to run on unsupported server versions (issue #3)

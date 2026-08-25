@@ -30,7 +30,7 @@
 
 - ✅ Native `.litematic` v6/v7 reader and writer (NBT-gzipped, compact cross-word packing, multi-region, palette resolution)
 - ✅ Folia-safe paste: per-chunk `RegionScheduler.run`, observers/pistons placed in a second pass, full TileEntity + Entity + PendingBlockTick + PendingFluidTick NBT preserved
-- ✅ **Servux Direct Paste**: vanilla Litematica clients can paste from their schematic GUI directly to the server, no `/fill` spam (validated against `litematica-fabric-1.21.11-0.27.6`)
+- ✅ **Servux Direct Paste**: vanilla Litematica clients can paste from their schematic GUI directly to the server, no `/fill` spam. Speaks BOTH wire eras: v1 (clients up to `26.2-0.28.4`, vanilla-NBT protocol) and v2 (`26.2-0.28.5+`, the "Data Tag" / Task Scheduler protocol), negotiated per player from the metadata handshake
 - ✅ DataFixerUpper bridge: older `.litematic` (1.16.5+) are upgraded to the current MC version at paste time
 - ✅ Brigadier commands: `/litematica paste|save|materials|list|info|reload|cancel` with permission-gated subcommands
 - ✅ Production stress-tested: 4.2M blocks pasted in **9.5 seconds**, 870k blocks + 6,500 tile entities via Direct Paste in **5.6 seconds**, zero region-file corruption
@@ -69,7 +69,7 @@ For players to paste directly from their own client (no admin upload), they need
 | MaLiLib | latest for your MC version | [Modrinth](https://modrinth.com/mod/malilib) |
 | **Litematica** | latest for your MC version | [Modrinth](https://modrinth.com/mod/litematica) |
 
-Validated end-to-end with Litematica 0.27.6 + MaLiLib 0.28.6 (26.1-era clients); the Servux wire format is re-verified unchanged on 26.2 (upstream `26.2-0.11.1`).
+Validated end-to-end with Litematica 0.27.6 + MaLiLib 0.28.6 (26.1-era clients) and re-verified on 26.2. Litematica `26.2-0.28.5` broke the wire (upstream Servux `26.2-0.11.3` "network protocol overhaul": Data Tag compression, protocol version 2, Task Scheduler paste); 0.7.0 speaks both eras and negotiates per player, so 0.28.4- and 0.28.5+ clients paste against the same server. See `SERVUX_WIRE_FORMAT.md` (wire v2 section) for the full delta.
 
 ### Critical client config (the one nobody documents)
 
@@ -231,7 +231,7 @@ The wire format is documented byte-for-byte in [`SERVUX_WIRE_FORMAT.md`](SERVUX_
 
 ## License
 
-[MIT](LICENSE). LitematicaFolia is an original implementation: no upstream code copied; LGPL clean. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux 26.1.2-0.10.2`](https://github.com/sakura-ryoko/servux) and re-verified unchanged against `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`).
+[MIT](LICENSE). LitematicaFolia is an original implementation: no upstream code copied; LGPL clean. Format parsing reverse-engineered from the public Litematica spec ([litemapy](https://litemapy.readthedocs.io/), [Lite2Edit](https://github.com/GoldenDelicios/Lite2Edit) MIT). Servux wire format aligned byte-for-byte with upstream [`sakura-ryoko/servux`](https://github.com/sakura-ryoko/servux): wire v1 against `26.1.2-0.10.2` / `26.2-0.11.1` (litematics `PROTOCOL_VERSION=1`, structures `=2`), wire v2 against `26.2-0.11.3` (litematics `PROTOCOL_VERSION=2`, Data Tag packets, Task Scheduler).
 
 ## Credits
 

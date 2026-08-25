@@ -148,6 +148,14 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         getLogger().info("[diag-net] -unregister " + e.getPlayer().getName() + " channel=" + e.getChannel());
     }
 
+    /** Drop per-player protocol state (wire version, partial paste streams). */
+    @EventHandler
+    public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
+        if (servuxBridge != null) {
+            servuxBridge.onPlayerQuit(e.getPlayer().getUniqueId());
+        }
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         // Initial dump on join (channels declared during config phase).

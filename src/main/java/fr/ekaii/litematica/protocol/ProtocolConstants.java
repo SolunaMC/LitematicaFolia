@@ -161,6 +161,44 @@ public final class ProtocolConstants {
          * {@link #S2C_NBT_STREAM_DATA} but in the opposite direction.
          */
         public static final int C2S_NBT_STREAM_DATA        = 13;
+
+        // ------------------------------------------------ v2 additions
+        // Introduced by Servux 26.2-0.11.3 / Litematica 26.2-0.28.5
+        // ("network protocol overhaul", upstream commit a24b3a3). All of
+        // these carry a Data Tag blob (see DataTagCodec) as payload.
+
+        /**
+         * C2S — client explicitly drops its registration (world change,
+         * mod disable, or protocol-version rejection). Payload:
+         * Data Tag blob (usually decodes to null/empty).
+         */
+        public static final int C2S_UNREGISTER_REPLY       = 8;
+
+        /**
+         * C2S — Task Scheduler request ({@code Task} = "Fill" or
+         * "Delete" with Box list + block states). Payload: Data Tag blob.
+         */
+        public static final int C2S_TASK_REQUEST           = 14;
+
+        /**
+         * S2C — Task Scheduler response. Reserved: the 0.28.5 client's
+         * receive path for this type is still commented out upstream.
+         */
+        public static final int S2C_TASK_RESPONSE          = 15;
+
+        /**
+         * S2C — InfoHudSync status stream for a running task. Payload:
+         * Data Tag blob {@code {InfoHudComplete: Byte, InfoHudSync:
+         * List<Compound>}}. Sending {@code {InfoHudComplete: 1b}} closes
+         * the client's paste progress HUD entry.
+         */
+        public static final int S2C_TASK_STATUS_SYNC       = 16;
+
+        /**
+         * C2S — Task cancel. Reserved: upstream server handler is still
+         * commented out ("TODO").
+         */
+        public static final int C2S_TASK_CANCEL            = 17;
     }
 
     // ----------------------------------------------- Structures packet IDs
@@ -209,10 +247,33 @@ public final class ProtocolConstants {
     public static final String METADATA_PROVIDER_NAME = "litematic_data";
 
     /**
-     * Servux's own protocol version for the litematics channel. From
-     * {@code ServuxLitematicaPacket.PROTOCOL_VERSION = 1}.
+     * Servux's litematics protocol version for the v1 wire era
+     * ({@code ServuxLitematicaPacket.PROTOCOL_VERSION = 1} up to Servux
+     * 26.2-0.11.1 / Litematica 26.2-0.28.4).
      */
     public static final int LITEMATICS_PROTOCOL_VERSION = 1;
+
+    /**
+     * Servux's litematics protocol version for the v2 wire era
+     * ({@code PROTOCOL_VERSION = 2} since Servux 26.2-0.11.3 /
+     * Litematica 26.2-0.28.5). v2 clients hard-require this exact value
+     * in the S2C metadata reply.
+     */
+    public static final int LITEMATICS_PROTOCOL_VERSION_V2 = 2;
+
+    /**
+     * Version string a v2 (0.28.5+) Litematica client will accept.
+     * {@code EntityDataManager.receiveServuxMetadata} requires
+     * {@code servux.startsWith("servux-fabric-" + MC_VERSION)}; on
+     * mismatch it disables its entityDataSync config entirely, killing
+     * Direct Paste client-side. We therefore emit the upstream-shaped
+     * prefix followed by our own identification. {@code mcVersion} must
+     * be the server's Minecraft version ("26.2", "26.2.1", ...), which
+     * matches the client's for a directly-connected client.
+     */
+    public static String servuxCompatString(String mcVersion) {
+        return "servux-fabric-" + mcVersion + "-0.11.3+" + SERVER_NAME.replace(' ', '-');
+    }
 
     /**
      * Servux's own protocol version for the structures channel. From
@@ -220,6 +281,6 @@ public final class ProtocolConstants {
      */
     public static final int STRUCTURES_PROTOCOL_VERSION = 2;
 
-    /** Our server identification string emitted as the {@code servux} key. */
-    public static final String SERVER_NAME       = "LitematicaFolia 0.1.0";
+    /** Our server identification string emitted as the {@code servux} key (v1 clients). */
+    public static final String SERVER_NAME       = "LitematicaFolia 0.7.0";
 }

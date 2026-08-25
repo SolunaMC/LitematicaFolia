@@ -6,10 +6,12 @@ import fr.ekaii.litematica.core.LitematicSchematic;
 import fr.ekaii.litematica.paste.PasteOperation;
 import fr.ekaii.litematica.paste.PasteOptions;
 import fr.ekaii.litematica.paste.PasteResult;
+import fr.ekaii.litematica.protocol.DataTagCodec;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.PacketSplitter;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
+import fr.ekaii.litematica.protocol.ProtocolSessions;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -108,8 +110,12 @@ public final class DirectPasteHandler {
      */
     private final java.util.Set<UUID> activePastes = ConcurrentHashMap.newKeySet();
 
-    public DirectPasteHandler(Plugin plugin) {
+    /** Per-player negotiated wire version (v1 vanilla-NBT vs v2 Data Tag). */
+    private final ProtocolSessions sessions;
+
+    public DirectPasteHandler(Plugin plugin, ProtocolSessions sessions) {
         this.plugin = plugin;
+        this.sessions = sessions;
         int cap = plugin.getConfig().getInt("protocol.maxDirectPasteSize",
                 PacketSplitter.DEFAULT_MAX_C2S_RECEIVE);
         this.splitter = new PacketSplitter(cap);
@@ -152,22 +158,39 @@ public final class DirectPasteHandler {
         LOG.info("[direct-paste] splitter reassembled " + assembled.length + " bytes from "
                 + player.getName());
 
-        // Decode (VarInt transactionId + NBT(compound)) of the
-        // application-layer payload Servux flushed.
-        ProtocolBuffer.Reader payloadReader = new ProtocolBuffer.Reader(assembled);
-        int transactionId;
+        // The reassembled application payload changed shape in wire v2
+        // (Servux 26.2-0.11.3 / Litematica 26.2-0.28.5):
+        //   v1: VarInt(transactionId) + vanilla network NBT compound
+        //   v2: Data Tag blob (Int32 length + gzipped NBT file stream) —
+        //       no transactionId at all.
+        // Prefer the negotiated version from the metadata handshake; fall
+        // back to framing detection (exact Int32 length prefix), which is
+        // unambiguous below a ~200 MB payload.
+        boolean v2 = sessions.isKnown(player.getUniqueId())
+                ? sessions.isV2(player.getUniqueId())
+                : DataTagCodec.looksLikeDataTagBlob(assembled);
+        int transactionId = -1;
         LitematicNbt.NbtCompound payload;
         try {
-            transactionId = payloadReader.readVarInt();
-            payload = payloadReader.readNbt();
+            if (v2) {
+                payload = DataTagCodec.decode(assembled);
+            } else {
+                ProtocolBuffer.Reader payloadReader = new ProtocolBuffer.Reader(assembled);
+                transactionId = payloadReader.readVarInt();
+                payload = payloadReader.readNbt();
+            }
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "splitter payload parse failed for " + player.getName(), t);
+            LOG.log(Level.WARNING, "splitter payload parse failed for " + player.getName()
+                    + " (wire v" + (v2 ? 2 : 1) + ")", t);
             return;
         }
         if (payload == null) {
-            LOG.warning("splitter payload had null NBT root for " + player.getName());
+            LOG.warning("splitter payload had null NBT root for " + player.getName()
+                    + " (wire v" + (v2 ? 2 : 1) + ")");
             return;
         }
+        LOG.info("[direct-paste] payload decoded (wire v" + (v2 ? 2 : 1) + ", task="
+                + orEmpty(payload.getString("Task")) + ") from " + player.getName());
         handleTransmitFrame(player, transactionId, payload);
     }
 
@@ -321,17 +344,18 @@ public final class DirectPasteHandler {
             Byte ignoreEntities = payload.getByte("IgnoreEntities");
             boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
 
-            // Map Litematica's Rotation enum string → yaw integer.
-            // NONE=0, CLOCKWISE_90=90, CLOCKWISE_180=180, COUNTERCLOCKWISE_90=270.
-            int yaw = 0;
-            String rot = payload.getString("Rotation");
-            if (rot != null) {
-                switch (rot) {
-                    case "CLOCKWISE_90"       -> yaw = 90;
-                    case "CLOCKWISE_180"      -> yaw = 180;
-                    case "COUNTERCLOCKWISE_90"-> yaw = 270;
-                    default                   -> yaw = 0;
-                }
+            // Map Litematica's Rotation to a yaw integer. Wire v1 sends
+            // the enum NAME as a String; wire v2 (0.28.5+) sends the enum
+            // ORDINAL as an Int (NONE=0, CLOCKWISE_90=1, CLOCKWISE_180=2,
+            // COUNTERCLOCKWISE_90=3).
+            int yaw = readRotationYaw(payload);
+            Integer mirror = payload.getInt("Mirror");
+            if (mirror != null && mirror != 0) {
+                LOG.warning("[direct-paste] placement requests Mirror ordinal " + mirror
+                        + " from " + player.getName()
+                        + " — mirroring is not supported yet, pasting unmirrored");
+                player.sendMessage("[LitematicaFolia] mirror is not supported for Direct Paste"
+                        + " yet — pasting the placement unmirrored.");
             }
 
             LitematicSchematic schem;
@@ -440,8 +464,59 @@ public final class DirectPasteHandler {
         return s == null ? "" : s;
     }
 
+    /**
+     * Rotation → yaw. Accepts the v1 String enum name and the v2 Int
+     * enum ordinal (Minecraft {@code Rotation}: NONE, CLOCKWISE_90,
+     * CLOCKWISE_180, COUNTERCLOCKWISE_90).
+     */
+    static int readRotationYaw(LitematicNbt.NbtCompound payload) {
+        LitematicNbt.NbtTag rot = payload.get("Rotation");
+        if (rot instanceof LitematicNbt.NbtString s) {
+            return switch (s.value()) {
+                case "CLOCKWISE_90"        -> 90;
+                case "CLOCKWISE_180"       -> 180;
+                case "COUNTERCLOCKWISE_90" -> 270;
+                default                    -> 0;
+            };
+        }
+        if (rot instanceof LitematicNbt.NbtInt i) {
+            return switch (i.value()) {
+                case 1  -> 90;
+                case 2  -> 180;
+                case 3  -> 270;
+                default -> 0;
+            };
+        }
+        return 0;
+    }
+
+    /**
+     * Tell a v2 (0.28.5+) client its Servux Paste task finished so the
+     * InfoHud progress entry it armed on send gets cleared. v1 clients
+     * do not know packet type 16 and would log an "invalid packet type"
+     * warning, so this is gated on the negotiated wire version.
+     */
+    private void sendTaskCompleteSync(Player player) {
+        if (!sessions.isV2(player.getUniqueId())) {
+            return;
+        }
+        try {
+            LitematicNbt.NbtCompound sync = new LitematicNbt.NbtCompound();
+            sync.putByte("InfoHudComplete", (byte) 1);
+            byte[] blob = DataTagCodec.encode(sync);
+            byte[] wire = PacketHandler.buildLitematics(
+                    ProtocolConstants.Litematics.S2C_TASK_STATUS_SYNC,
+                    w -> w.writeRawBytes(blob));
+            player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, wire);
+            LOG.info("[direct-paste] TX S2C_TASK_STATUS_SYNC InfoHudComplete to " + player.getName());
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "task-complete sync failed for " + player.getName(), t);
+        }
+    }
+
     private void reportComplete(Player player, PasteResult res, Throwable err) {
         try {
+            sendTaskCompleteSync(player);
             if (err != null) {
                 LOG.log(Level.WARNING, "direct paste failed for " + player.getName(), err);
                 player.sendMessage("[LitematicaFolia] paste failed: "

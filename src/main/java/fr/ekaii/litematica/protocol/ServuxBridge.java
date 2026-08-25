@@ -58,19 +58,21 @@ public final class ServuxBridge {
     private final BlockEntityRequestHandler blockEntityRequestHandler;
     private final EntityRequestHandler entityRequestHandler;
     private final BulkNbtRequestHandler bulkNbtRequestHandler;
+    private final ProtocolSessions sessions;
 
     private volatile boolean enabled;
 
     public ServuxBridge(Plugin plugin) {
         this.plugin = plugin;
         NmsBridge nms = NmsBridge.get();
-        this.metadataHandler    = new MetadataHandler(plugin);
+        this.sessions           = new ProtocolSessions();
+        this.metadataHandler    = new MetadataHandler(plugin, sessions);
         this.easyPlaceHandler   = new EasyPlaceHandler(plugin);
-        this.directPasteHandler = new DirectPasteHandler(plugin);
+        this.directPasteHandler = new DirectPasteHandler(plugin, sessions);
         this.structureBboxHandler = new StructureBboxHandler(plugin);
-        this.blockEntityRequestHandler = new BlockEntityRequestHandler(plugin, nms);
-        this.entityRequestHandler      = new EntityRequestHandler(plugin, nms);
-        this.bulkNbtRequestHandler     = new BulkNbtRequestHandler(plugin, nms);
+        this.blockEntityRequestHandler = new BlockEntityRequestHandler(plugin, nms, sessions);
+        this.entityRequestHandler      = new EntityRequestHandler(plugin, nms, sessions);
+        this.bulkNbtRequestHandler     = new BulkNbtRequestHandler(plugin, nms, sessions);
         this.packetHandler = new PacketHandler(
                 plugin,
                 metadataHandler,
@@ -79,7 +81,8 @@ public final class ServuxBridge {
                 structureBboxHandler,
                 blockEntityRequestHandler,
                 entityRequestHandler,
-                bulkNbtRequestHandler);
+                bulkNbtRequestHandler,
+                sessions);
     }
 
     /**
@@ -180,6 +183,18 @@ public final class ServuxBridge {
 
     /** Exposes the metadata handler so the plugin can proactively push S2C_METADATA on join. */
     public MetadataHandler getMetadataHandler() { return metadataHandler; }
+
+    /** Per-player negotiated wire-version registry (v1 vs v2). */
+    public ProtocolSessions getSessions() { return sessions; }
+
+    /**
+     * Drop all per-player protocol state (negotiated wire version,
+     * partial splitter streams, transmit sessions). Call on player quit.
+     */
+    public void onPlayerQuit(java.util.UUID player) {
+        sessions.forget(player);
+        directPasteHandler.onPlayerQuit(player);
+    }
 
     /**
      * Convenience send-to-player on the Litematics channel. No-op if the

@@ -39,6 +39,7 @@ public final class PacketHandler {
     private final BlockEntityRequestHandler blockEntityRequest;
     private final EntityRequestHandler entityRequest;
     private final BulkNbtRequestHandler bulkNbtRequest;
+    private final ProtocolSessions sessions;
 
     public PacketHandler(Plugin plugin,
                          MetadataHandler metadata,
@@ -47,7 +48,8 @@ public final class PacketHandler {
                          StructureBboxHandler structures,
                          BlockEntityRequestHandler blockEntityRequest,
                          EntityRequestHandler entityRequest,
-                         BulkNbtRequestHandler bulkNbtRequest) {
+                         BulkNbtRequestHandler bulkNbtRequest,
+                         ProtocolSessions sessions) {
         this.plugin = plugin;
         this.metadata = metadata;
         this.easyPlace = easyPlace;
@@ -56,6 +58,7 @@ public final class PacketHandler {
         this.blockEntityRequest = blockEntityRequest;
         this.entityRequest = entityRequest;
         this.bulkNbtRequest = bulkNbtRequest;
+        this.sessions = sessions;
     }
 
     // ------------------------------------------------------------- entrypoints
@@ -100,6 +103,38 @@ public final class PacketHandler {
                     // does, treat it as the first slice of a stream so we
                     // are more tolerant than the upstream receiver.
                     directPaste.onSplitterSlice(player, r);
+                case ProtocolConstants.Litematics.C2S_UNREGISTER_REPLY -> {
+                    // v2 client dropping its registration (world change /
+                    // mod disable / protocol rejection). Forget the
+                    // negotiated wire version so a later re-register
+                    // renegotiates cleanly, and drop partial paste state.
+                    LOG.info("[diag-net] unregister from " + player.getName());
+                    sessions.forget(player.getUniqueId());
+                    directPaste.onPlayerQuit(player.getUniqueId());
+                }
+                case ProtocolConstants.Litematics.C2S_TASK_REQUEST -> {
+                    // v2 Task Scheduler request (Fill / Delete). Not
+                    // implemented in LitematicaFolia yet — acknowledge
+                    // politely instead of silently dropping.
+                    String task = "?";
+                    try {
+                        var tags = DataTagCodec.decode(r);
+                        if (tags != null && tags.getString("Task") != null) {
+                            task = tags.getString("Task");
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                    LOG.info("[diag-net] task request '" + task + "' from "
+                            + player.getName() + " — not supported, ignoring");
+                    try {
+                        player.sendMessage("[LitematicaFolia] Servux task '" + task
+                                + "' is not supported by this server yet.");
+                    } catch (Throwable ignored) {
+                    }
+                }
+                case ProtocolConstants.Litematics.C2S_TASK_CANCEL ->
+                    LOG.info("[diag-net] task cancel from " + player.getName()
+                            + " — no cancellable tasks, ignoring");
                 default -> LOG.warning("unknown servux:litematics packet type " + type
                         + " from " + player.getName());
             }
