@@ -3,9 +3,13 @@ package fr.ekaii.litematica.protocol.handler;
 import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.core.LitematicReader;
 import fr.ekaii.litematica.core.LitematicSchematic;
+import fr.ekaii.litematica.paste.LayerFilter;
 import fr.ekaii.litematica.paste.PasteOperation;
 import fr.ekaii.litematica.paste.PasteOptions;
 import fr.ekaii.litematica.paste.PasteResult;
+import fr.ekaii.litematica.paste.PlacementTransform;
+import fr.ekaii.litematica.paste.ReplaceBehavior;
+import fr.ekaii.litematica.paste.SubRegionOverride;
 import fr.ekaii.litematica.protocol.DataTagCodec;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.PacketSplitter;
@@ -281,7 +285,9 @@ public final class DirectPasteHandler {
             LitematicSchematic schem = LitematicReader.read(fileBytes);
 
             Location origin   = readOrigin(session.placementData, player);
-            PasteOptions opts = readOptions(session.placementData, origin);
+            PasteOptions opts = session.placementData == null
+                    ? PasteOptions.defaults(origin)
+                    : parsePlacementOptions(session.placementData, origin, player);
 
             new PasteOperation(plugin, schem, opts, player.getName()).execute()
                     .whenComplete((res, err) -> {
@@ -341,23 +347,6 @@ public final class DirectPasteHandler {
                 LOG.warning("[direct-paste] LitematicaPaste no usable origin from " + player.getName());
                 return;
             }
-            Byte ignoreEntities = payload.getByte("IgnoreEntities");
-            boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
-
-            // Map Litematica's Rotation to a yaw integer. Wire v1 sends
-            // the enum NAME as a String; wire v2 (0.28.5+) sends the enum
-            // ORDINAL as an Int (NONE=0, CLOCKWISE_90=1, CLOCKWISE_180=2,
-            // COUNTERCLOCKWISE_90=3).
-            int yaw = readRotationYaw(payload);
-            Integer mirror = payload.getInt("Mirror");
-            if (mirror != null && mirror != 0) {
-                LOG.warning("[direct-paste] placement requests Mirror ordinal " + mirror
-                        + " from " + player.getName()
-                        + " — mirroring is not supported yet, pasting unmirrored");
-                player.sendMessage("[LitematicaFolia] mirror is not supported for Direct Paste"
-                        + " yet — pasting the placement unmirrored.");
-            }
-
             LitematicSchematic schem;
             try {
                 schem = LitematicReader.fromCompound(schematicsCompound);
@@ -370,17 +359,7 @@ public final class DirectPasteHandler {
                 return;
             }
 
-            PasteOptions defaults = PasteOptions.defaults(origin);
-            PasteOptions opts = new PasteOptions(
-                    origin,
-                    placeEntities,
-                    defaults.placeTileEntities(),
-                    defaults.placePendingTicks(),
-                    defaults.deferredPhysics(),
-                    defaults.observersLast(),
-                    defaults.maxBlocksPerChunkTask(),
-                    yaw,
-                    null);
+            PasteOptions opts = parsePlacementOptions(payload, origin, player);
 
             player.sendMessage("[LitematicaFolia] Direct Paste via Servux — placing "
                     + schem.regions.size() + " region(s) at "
@@ -465,29 +444,79 @@ public final class DirectPasteHandler {
     }
 
     /**
-     * Rotation → yaw. Accepts the v1 String enum name and the v2 Int
-     * enum ordinal (Minecraft {@code Rotation}: NONE, CLOCKWISE_90,
-     * CLOCKWISE_180, COUNTERCLOCKWISE_90).
+     * Builds the full {@link PasteOptions} from a Litematica placement
+     * compound ({@code SchematicPlacement.toData()} / v1 {@code toNbt()} /
+     * legacy Transmit {@code PlacementData}) — issue #4: honors ReplaceMode,
+     * global Rotation + Mirror, SubRegions overrides, PasteLayerBehavior +
+     * RenderLayerRange, IgnoreEntities, plus our legacy Transmit-path fields
+     * (PlaceEntities / PlaceTileEntities / … / YawRotation) when present.
+     *
+     * <p>Rotation/Mirror accept both wire encodings: v1 sends the enum NAME
+     * as a String, v2 (0.28.5+) the enum ORDINAL as an Int.
      */
-    static int readRotationYaw(LitematicNbt.NbtCompound payload) {
-        LitematicNbt.NbtTag rot = payload.get("Rotation");
-        if (rot instanceof LitematicNbt.NbtString s) {
-            return switch (s.value()) {
-                case "CLOCKWISE_90"        -> 90;
-                case "CLOCKWISE_180"       -> 180;
-                case "COUNTERCLOCKWISE_90" -> 270;
-                default                    -> 0;
-            };
+    PasteOptions parsePlacementOptions(LitematicNbt.NbtCompound payload, Location origin,
+                                       Player player) {
+        PasteOptions defaults = PasteOptions.defaults(origin);
+
+        // Global orientation.
+        PlacementTransform.Rot rotation = PlacementTransform.readRotation(payload, "Rotation");
+        PlacementTransform.Mir mirror   = PlacementTransform.readMirror(payload, "Mirror");
+        // Legacy Transmit-path yaw override (our own field, pre-0.8).
+        Integer yawRotation = payload.getInt("YawRotation");
+        if (yawRotation != null && rotation == PlacementTransform.Rot.NONE) {
+            rotation = PlacementTransform.Rot.fromDegrees(yawRotation);
         }
-        if (rot instanceof LitematicNbt.NbtInt i) {
-            return switch (i.value()) {
-                case 1  -> 90;
-                case 2  -> 180;
-                case 3  -> 270;
-                default -> 0;
-            };
-        }
-        return 0;
+
+        // Replace semantics. Absent field (old v1 clients) keeps the
+        // historical WITH_NON_AIR behavior; a present value is honored
+        // exactly, unknown values fall back to NONE like upstream Servux.
+        ReplaceBehavior replace = ReplaceBehavior.fromString(
+                payload.getString("ReplaceMode"), ReplaceBehavior.WITH_NON_AIR);
+
+        // Layer-limited paste.
+        LayerFilter layerFilter = LayerFilter.fromNbt(
+                payload.getString("PasteLayerBehavior"),
+                payload.getCompound("RenderLayerRange"));
+
+        // Per-sub-region placement overrides.
+        Map<String, SubRegionOverride> subRegions =
+                SubRegionOverride.parseAll(payload.getCompound("SubRegions"));
+
+        // Entity gate: standard IgnoreEntities byte, or legacy PlaceEntities.
+        Byte ignoreEntities = payload.getByte("IgnoreEntities");
+        Byte placeEntitiesB = payload.getByte("PlaceEntities");
+        boolean placeEntities = placeEntitiesB != null ? placeEntitiesB != 0
+                : ignoreEntities == null || ignoreEntities == 0;
+
+        // Legacy Transmit-path toggles (absent on real Litematica clients).
+        Byte placeTileEntities = payload.getByte("PlaceTileEntities");
+        Byte placePendingTicks = payload.getByte("PlacePendingTicks");
+        Byte deferredPhysics   = payload.getByte("DeferredPhysics");
+        Byte observersLast     = payload.getByte("ObserversLast");
+
+        int maxPerTask = plugin.getConfig().getInt("paste.maxBlocksPerChunkTask",
+                defaults.maxBlocksPerChunkTask());
+
+        LOG.info("[direct-paste] placement options for " + player.getName()
+                + ": rot=" + rotation + " mirror=" + mirror + " replace=" + replace
+                + " entities=" + placeEntities
+                + (layerFilter != null ? " " + layerFilter : "")
+                + (subRegions.isEmpty() ? "" : " subRegions=" + subRegions.keySet()));
+
+        return new PasteOptions(
+                origin,
+                placeEntities,
+                placeTileEntities == null ? defaults.placeTileEntities() : placeTileEntities != 0,
+                placePendingTicks == null ? defaults.placePendingTicks() : placePendingTicks != 0,
+                deferredPhysics   == null ? defaults.deferredPhysics()   : deferredPhysics != 0,
+                observersLast     == null ? defaults.observersLast()     : observersLast != 0,
+                maxPerTask,
+                rotation,
+                mirror,
+                replace,
+                layerFilter,
+                subRegions,
+                null);
     }
 
     /**
@@ -544,30 +573,6 @@ public final class DirectPasteHandler {
             return player.getLocation().clone();
         }
         return new Location(player.getWorld(), x, y, z);
-    }
-
-    private PasteOptions readOptions(LitematicNbt.NbtCompound payload, Location origin) {
-        PasteOptions defaults = PasteOptions.defaults(origin);
-        if (payload == null) {
-            return defaults;
-        }
-        Byte placeEntities      = payload.getByte("PlaceEntities");
-        Byte placeTileEntities  = payload.getByte("PlaceTileEntities");
-        Byte placePendingTicks  = payload.getByte("PlacePendingTicks");
-        Byte deferredPhysics    = payload.getByte("DeferredPhysics");
-        Byte observersLast      = payload.getByte("ObserversLast");
-        Integer yawRotation     = payload.getInt("YawRotation");
-
-        return new PasteOptions(
-                origin,
-                placeEntities      == null ? defaults.placeEntities()      : placeEntities      != 0,
-                placeTileEntities  == null ? defaults.placeTileEntities()  : placeTileEntities  != 0,
-                placePendingTicks  == null ? defaults.placePendingTicks()  : placePendingTicks  != 0,
-                deferredPhysics    == null ? defaults.deferredPhysics()    : deferredPhysics    != 0,
-                observersLast      == null ? defaults.observersLast()      : observersLast      != 0,
-                defaults.maxBlocksPerChunkTask(),
-                yawRotation == null ? defaults.yawRotation() : (yawRotation % 360),
-                null);
     }
 
     // --------------------------------------------------- Transmit session

@@ -83,7 +83,7 @@ final class ProtocolV2NegotiationTest {
         assertEquals(180, yawOf(ordinal(2)));
         assertEquals(270, yawOf(ordinal(3)));
         // Absent -> 0.
-        assertEquals(0, DirectPasteHandler.readRotationYaw(new LitematicNbt.NbtCompound()));
+        assertEquals(0, yawOf(new LitematicNbt.NbtCompound()));
     }
 
     private static LitematicNbt.NbtCompound str(String name) {
@@ -99,6 +99,6 @@ final class ProtocolV2NegotiationTest {
     }
 
     private static int yawOf(LitematicNbt.NbtCompound c) {
-        return DirectPasteHandler.readRotationYaw(c);
+        return fr.ekaii.litematica.paste.PlacementTransform.readRotation(c, "Rotation").degrees;
     }
 }

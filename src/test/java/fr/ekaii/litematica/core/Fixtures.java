@@ -265,15 +265,128 @@ public final class Fixtures {
         return s;
     }
 
+    // ------------------------------------------------------- Fixture C (issue #4)
+
+    /**
+     * Placement-fidelity fixture for the issue #4 E2E battery:
+     * one region "main", 5×3×5, with a NON-ZERO region Position (10, 0, 20)
+     * so a paste that double-applies the region offset (issue #4.2) lands
+     * blocks/entities visibly wrong.
+     *
+     * <ul>
+     *   <li>y=0 and y=2: solid stone slabs (5×5), except:
+     *       local (0,2,0) = oak_stairs[facing=north] (directional-rotation
+     *       probe) and local (4,2,4) = structure_void (must never paste).</li>
+     *   <li>y=1: stone ring with a 3×3 air cavity (replace-mode probe).</li>
+     *   <li>armor_stand at region-local (2.5, 1.0, 2.25) yaw 0 (fractional
+     *       position + yaw rotation probe).</li>
+     *   <li>minecart at region-local (1.5, 1.0, 3.25) (fractional position
+     *       probe).</li>
+     * </ul>
+     */
+    public static LitematicSchematic fidelityCube() {
+        LitematicSchematic s = skeleton("fidelity-cube", 5, 3, 5, 1);
+
+        LitematicRegion r = new LitematicRegion();
+        r.name = "main";
+        r.originX = 10; r.originY = 0; r.originZ = 20;
+        r.sizeX = 5; r.sizeY = 3; r.sizeZ = 5;
+        r.palette.add(new BlockStateEntry("minecraft:air"));                       // 0
+        r.palette.add(new BlockStateEntry("minecraft:stone"));                     // 1
+        r.palette.add(new BlockStateEntry("minecraft:oak_stairs",                  // 2
+                linked("facing", "north", "half", "bottom", "shape", "straight",
+                        "waterlogged", "false")));
+        r.palette.add(new BlockStateEntry("minecraft:structure_void"));            // 3
+        r.blocks = new int[5 * 3 * 5];
+        for (int y = 0; y < 3; y++) {
+            for (int z = 0; z < 5; z++) {
+                for (int x = 0; x < 5; x++) {
+                    int idx;
+                    if (y == 1) {
+                        boolean cavity = x >= 1 && x <= 3 && z >= 1 && z <= 3;
+                        idx = cavity ? 0 : 1;
+                    } else {
+                        idx = 1;
+                    }
+                    if (y == 2 && x == 0 && z == 0) idx = 2;
+                    if (y == 2 && x == 4 && z == 4) idx = 3;
+                    r.blocks[y * 5 * 5 + z * 5 + x] = idx;
+                }
+            }
+        }
+
+        r.tileEntities      = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.entities          = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.entities.values().add(simpleEntity("minecraft:armor_stand", 2.5, 1.0, 2.25, 0.0f));
+        r.entities.values().add(simpleEntity("minecraft:minecart", 1.5, 1.0, 3.25, 0.0f));
+        r.pendingBlockTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.pendingFluidTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+
+        s.regions.put(r.name, r);
+        s.metadata.totalBlocks = r.countNonAir();
+        return s;
+    }
+
+    /**
+     * Two-region fixture for the SubRegions-override E2E: region "A"
+     * (2×2×2 stone at Position (0,0,0)) and region "B" (2×2×2
+     * diamond_block at Position (6,0,0)).
+     */
+    public static LitematicSchematic twoTowers() {
+        LitematicSchematic s = skeleton("two-towers", 8, 2, 2, 2);
+
+        s.regions.put("A", towerRegion("A", 0, "minecraft:stone"));
+        s.regions.put("B", towerRegion("B", 6, "minecraft:diamond_block"));
+        s.metadata.totalBlocks = 16;
+        return s;
+    }
+
+    private static LitematicRegion towerRegion(String name, int posX, String block) {
+        LitematicRegion r = new LitematicRegion();
+        r.name = name;
+        r.originX = posX; r.originY = 0; r.originZ = 0;
+        r.sizeX = 2; r.sizeY = 2; r.sizeZ = 2;
+        r.palette.add(new BlockStateEntry("minecraft:air"));
+        r.palette.add(new BlockStateEntry(block));
+        r.blocks = new int[2 * 2 * 2];
+        for (int i = 0; i < r.blocks.length; i++) r.blocks[i] = 1;
+        r.tileEntities      = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.entities          = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.pendingBlockTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        r.pendingFluidTicks = new LitematicNbt.NbtList(LitematicNbt.TAG_COMPOUND, new ArrayList<>());
+        return r;
+    }
+
+    private static LitematicNbt.NbtCompound simpleEntity(String id, double x, double y, double z, float yaw) {
+        LitematicNbt.NbtCompound e = new LitematicNbt.NbtCompound();
+        e.putString("id", id);
+        LitematicNbt.NbtList pos = new LitematicNbt.NbtList(
+                LitematicNbt.TAG_DOUBLE, new ArrayList<>());
+        pos.values().add(new LitematicNbt.NbtDouble(x));
+        pos.values().add(new LitematicNbt.NbtDouble(y));
+        pos.values().add(new LitematicNbt.NbtDouble(z));
+        e.put("Pos", pos);
+        LitematicNbt.NbtList rot = new LitematicNbt.NbtList(
+                LitematicNbt.TAG_FLOAT, new ArrayList<>());
+        rot.values().add(new LitematicNbt.NbtFloat(yaw));
+        rot.values().add(new LitematicNbt.NbtFloat(0.0f));
+        e.put("Rotation", rot);
+        return e;
+    }
+
     // ------------------------------------------------------- Disk-write helper
 
-    /** Writes both canonical fixtures to {@code dir}. */
+    /** Writes the canonical fixtures to {@code dir}. */
     public static void writeAll(Path dir) throws IOException {
         Files.createDirectories(dir);
         Files.write(dir.resolve("stone-cube-4.litematic"),
                 LitematicWriter.writeToBytes(stoneCube4()));
         Files.write(dir.resolve("mixed-room-8.litematic"),
                 LitematicWriter.writeToBytes(mixedRoom8()));
+        Files.write(dir.resolve("fidelity-cube.litematic"),
+                LitematicWriter.writeToBytes(fidelityCube()));
+        Files.write(dir.resolve("two-towers.litematic"),
+                LitematicWriter.writeToBytes(twoTowers()));
     }
 
     /** Writes the large stress fixture to {@code dir}. Heavy — call only from stress tests. */

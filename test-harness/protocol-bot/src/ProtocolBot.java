@@ -125,6 +125,37 @@ public final class ProtocolBot {
      */
     private static int wire = 1;
 
+    // ---- issue #4 placement options (defaults match the pre-0.8 payload)
+    private static int rotationOrdinal = 0;
+    private static int mirrorOrdinal = 0;
+    private static String replaceMode = "NONE";
+    private static boolean ignoreEntities = false;
+    private static String layerSingleAxis = null;
+    private static int layerSingleValue = 0;
+    private static final java.util.List<String> subRegionSpecs = new java.util.ArrayList<>();
+
+    /** Builds the SubRegions compound from the --sub-region CLI specs. */
+    private static LitematicNbt.NbtCompound buildSubRegions() {
+        LitematicNbt.NbtCompound subs = new LitematicNbt.NbtCompound();
+        for (String spec : subRegionSpecs) {
+            String[] p = spec.split(":");
+            String name = p[0];
+            LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
+            c.putString("Name", name);
+            c.putByte("Enabled", (byte) (p.length > 1 && p[1].equals("0") ? 0 : 1));
+            if (p.length > 2 && !p[2].equals("-")) {
+                String[] xyz = p[2].split(",");
+                c.putIntArray("Pos", new int[] {
+                        Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2])});
+            }
+            c.putInt("Rotation", p.length > 3 ? Integer.parseInt(p[3]) : 0);
+            c.putInt("Mirror", 0);
+            c.putByte("IgnoreEntities", (byte) 0);
+            subs.put(name, c);
+        }
+        return subs;
+    }
+
     public static void main(String[] args) throws Exception {
         parseArgs(args);
 
@@ -719,13 +750,33 @@ public final class ProtocolBot {
         data.putString("HashCode", UUID.randomUUID().toString());
         data.put("Schematics", schematicRoot);
         data.putIntArray("Origin", new int[] {ox, oy, oz});
-        data.putInt("Rotation", 0);   // v2: enum ORDINAL (NONE)
-        data.putInt("Mirror", 0);     // v2: enum ORDINAL (NONE)
-        data.put("SubRegions", new LitematicNbt.NbtCompound());
-        data.putString("ReplaceMode", "NONE");
-        data.putString("PasteLayerBehavior", "ALL");
+        data.putInt("Rotation", rotationOrdinal);   // v2: enum ORDINAL
+        data.putInt("Mirror", mirrorOrdinal);       // v2: enum ORDINAL
+        data.put("SubRegions", buildSubRegions());
+        data.putString("ReplaceMode", replaceMode);
+        if (ignoreEntities) data.putByte("IgnoreEntities", (byte) 1);
+        if (layerSingleAxis != null) {
+            data.putString("PasteLayerBehavior", "rendered_only");
+            LitematicNbt.NbtCompound range = new LitematicNbt.NbtCompound();
+            range.putString("mode", "single_layer");
+            range.putString("axis", layerSingleAxis);
+            range.putInt("layer_single", layerSingleValue);
+            range.putInt("layer_above", 0);
+            range.putInt("layer_below", 0);
+            range.putInt("layer_range_min", 0);
+            range.putInt("layer_range_max", 0);
+            range.putByte("hotkey_range_min", (byte) 0);
+            range.putByte("hotkey_range_max", (byte) 0);
+            data.put("RenderLayerRange", range);
+        } else {
+            data.putString("PasteLayerBehavior", "ALL");
+        }
         data.putString("Task", "LitematicaPaste");
         data.putInt("Interval", 1);
+        log("[servux] placement: rot=" + rotationOrdinal + " mirror=" + mirrorOrdinal
+                + " replace=" + replaceMode + " ignoreEntities=" + ignoreEntities
+                + " subRegions=" + subRegionSpecs
+                + (layerSingleAxis != null ? " layer=" + layerSingleAxis + "@" + layerSingleValue : ""));
 
         byte[] blob = encodeDataTagBlob(data);
         log("[servux] v2 Data Tag blob: " + blob.length + " bytes (Int32 + gzip)");
@@ -919,6 +970,21 @@ public final class ProtocolBot {
                     String w = args[++i];
                     wire = w.equals("v2") || w.equals("2") ? 2 : 1;
                 }
+                // ---- issue #4 placement options (v2 LitematicaPaste payload)
+                case "--rotation" -> rotationOrdinal = Integer.parseInt(args[++i]);
+                case "--mirror" -> mirrorOrdinal = Integer.parseInt(args[++i]);
+                case "--replace-mode" -> replaceMode = args[++i];
+                case "--ignore-entities" -> ignoreEntities = true;
+                // --layer-single <axis>,<value>: PasteLayerBehavior=rendered_only
+                // with a single_layer RenderLayerRange.
+                case "--layer-single" -> {
+                    String[] p = args[++i].split(",");
+                    layerSingleAxis = p[0];
+                    layerSingleValue = Integer.parseInt(p[1]);
+                }
+                // --sub-region <name>:<enabled 0|1>:<posX,posY,posZ or ->:<rotOrdinal>
+                // (repeatable). "-" for pos means "no Pos override sent".
+                case "--sub-region" -> subRegionSpecs.add(args[++i]);
                 default -> System.err.println("unknown arg: " + args[i]);
             }
         }

@@ -2,6 +2,76 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.8.0+26.2 - 2026-08-27
+
+### Fixed - Servux Direct Paste placement fidelity (issue #4)
+
+All seven defects reported in issue #4 are fixed, plus two related gaps
+found during verification. Semantics are matched to upstream Litematica
+0.28.5 / Servux 0.11.x source, not re-invented.
+
+- **ReplaceMode honored** (#4.1): `NONE` only writes into destination air
+  (checked on the owning region thread), `ALL` writes schematic air so it
+  clears destination blocks, `WITH_NON_AIR` keeps the previous behavior.
+  Wire values (`none`/`all`/`with_non_air`, case-insensitive, enum names
+  accepted) are parsed on both the inline `LitematicaPaste` and the
+  Transmit paths. A missing field keeps the historical `WITH_NON_AIR`
+  so legacy v1 clients see no behavior change; unknown values fall back
+  to `NONE` like upstream Servux.
+- **Entity positions** (#4.2): entity `Pos` is region-local (relative to
+  the region's raw on-disk `Position` corner) in the litematic format —
+  the paste no longer subtracts the region origin a second time. Regions
+  saved with negative sizes are handled through the raw `pos1` corner,
+  which differs from the normalised min corner blocks use.
+- **Fractional entity rotation** (#4.3): entity coordinates now go through
+  the upstream cell-preserving double transform (`CW90: (x,z) -> (1-z, x)`),
+  not an integer rotation with re-attached fractions. Note the issue's
+  suggested plain negation would shift entities into the neighbouring
+  block cell; upstream's `1.0-v` convention is reproduced exactly.
+- **Entity orientation** (#4.4): entities are spawned through NMS
+  `Entity#mirror`/`Entity#rotate` (vanilla StructureTemplate semantics),
+  so yaw follows the placement rotation and hanging entities (item
+  frames, paintings) also rotate their facing.
+- **SubRegions overrides** (#4.5): per-region `Pos` override, `Rotation`,
+  `Mirror`, `Enabled` and `IgnoreEntities` from the placement's
+  `SubRegions` compound are applied. Disabled regions are skipped
+  entirely; moved regions paste at the client-visible position;
+  per-region rotations compose with the global rotation exactly like
+  upstream (`getRotated`, sub-mirror axis swap under quarter turns).
+- **PasteLayerBehavior + RenderLayerRange** (#4.6): `rendered_only`
+  pastes filter blocks, tile entities, entities and pending ticks by the
+  transmitted layer range on final world coordinates (all modes:
+  single_layer, layer_range, all_above, all_below on any axis).
+- **maxBlocksPerChunkTask enforced** (#4.7): per-chunk write lists are
+  split into batches of at most `paste.maxBlocksPerChunkTask` blocks;
+  the chunk task yields back to the region scheduler between batches.
+  Phase order (pass 1 blocks -> tile entities -> pass 2 active blocks ->
+  entities/ticks -> physics sweep) is preserved; the chunk-throttle
+  permit spans a chunk's whole batch chain.
+
+### Fixed - related gaps found during the issue #4 audit
+
+- **Block states now rotate/mirror**: stairs, rails, logs, torches and
+  every other directional block get `BlockState#rotate`/`#mirror`
+  applied (cached per palette entry per region). Previously a rotated
+  paste placed all blocks with their original facing.
+- **`minecraft:structure_void` is never pasted**, in any replace mode
+  (upstream behavior). Previously it was placed as a real block.
+- **Mirror support**: global and per-sub-region mirrors are applied
+  (coordinates, block states, entity yaw/facing). 0.7.0 warned
+  "mirror is not supported yet" and pasted unmirrored.
+
+### Testing
+
+- New unit battery `PlacementFidelityTest` (transforms, composition,
+  sub-mirror swap, wire parsing, layer filter, SubRegions parsing).
+- New E2E harness `test-harness/fidelity-smoke.sh`: real Folia 26.2
+  server, superflat world, ProtocolBot wire-v2 pastes across six
+  scenarios (three replace modes, CW90 rotation with entity/stairs
+  assertions via paste-save-dump round trip, SubRegions move+disable,
+  single-layer paste), with `maxBlocksPerChunkTask=16` so every paste
+  also exercises the batching path.
+
 ## 0.7.0+26.2 - 2026-08-25
 
 ### Added - Servux wire v2 (Litematica 26.2-0.28.5 "Data Tag" protocol)
