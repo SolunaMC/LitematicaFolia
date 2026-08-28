@@ -1,16 +1,21 @@
 PASS
 
-All 27 fidelity checks passed across 6 scenarios (wire v2, batching=16/task).
+All 56 fidelity checks passed across 12 scenarios (wire v2, batching=16/task).
 
 Paste log lines:
-[20:00:57] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 359ms
-[20:01:11] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0 entities, 0 err in 301ms
-[20:01:25] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 74 blocks, 0 TE, 0 entities, 0 err in 296ms
-[20:01:37] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 349ms
-[20:01:48] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 8 blocks, 0 TE, 0 entities, 0 err in 95ms
-[20:02:00] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 16 blocks, 0 TE, 0 entities, 0 err in 98ms
+[16:45:37] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 336ms (6 region batch tasks)
+[16:45:51] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0 entities, 0 err in 299ms (5 region batch tasks)
+[16:46:05] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 74 blocks, 0 TE, 0 entities, 0 err in 298ms (5 region batch tasks)
+[16:46:16] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 346ms (6 region batch tasks)
+[16:46:28] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 8 blocks, 0 TE, 0 entities, 0 err in 99ms (1 region batch tasks)
+[16:46:39] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 16 blocks, 0 TE, 0 entities, 0 err in 98ms (1 region batch tasks)
+[16:46:53] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 349ms (6 region batch tasks)
+[16:47:05] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 349ms (6 region batch tasks)
+[16:47:17] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 65 blocks, 0 TE, 2 entities, 0 err in 349ms (6 region batch tasks)
+[16:47:28] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 8 blocks, 0 TE, 1 entities, 0 err in 147ms (3 region batch tasks)
+[16:47:40] [Folia Region Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste complete: 16 blocks, 0 TE, 1 entities, 0 err in 146ms (3 region batch tasks)
 
-checks run : 27
+checks run : 56
 failures   : 0
 
 server log: /Users/paulchauvat/litematica-folia-ekaii/test-harness/server/logs/latest.log

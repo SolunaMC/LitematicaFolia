@@ -164,6 +164,40 @@ public final class PasteOperation {
      */
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
+    /**
+     * Count of region tasks dispatched through {@link #scheduleChunkBatch}
+     * (issue #4.7 observability). A chunk whose write list exceeds
+     * {@link PasteOptions#maxBlocksPerChunkTask()} contributes MORE than one
+     * task here, so this counter exceeding the number of chunk chains proves
+     * the batching yield actually fired. Reported in the completion log line
+     * and asserted by the fidelity smoke.
+     */
+    private final AtomicLong batchTasksDispatched = new AtomicLong();
+
+    /**
+     * Dispatches one runnable onto the region owning chunk (cx, cz).
+     * Production value routes through {@link FoliaCompat#runOnRegion};
+     * unit tests substitute a synchronous dispatcher via
+     * {@link #setRegionTaskDispatcherForTest} to prove the batching chain
+     * yields between batches without a live server.
+     */
+    @FunctionalInterface
+    interface RegionTaskDispatcher {
+        CompletableFuture<Void> dispatch(World world, int cx, int cz, Runnable task);
+    }
+
+    private RegionTaskDispatcher regionTaskDispatcher;
+
+    /** Test seam for the issue #4.7 batching unit test. Package-private. */
+    void setRegionTaskDispatcherForTest(RegionTaskDispatcher dispatcher) {
+        this.regionTaskDispatcher = dispatcher;
+    }
+
+    /** Batch tasks dispatched so far (test observability). */
+    long batchTasksDispatched() {
+        return batchTasksDispatched.get();
+    }
+
     public PasteOperation(Plugin plugin, LitematicSchematic schematic, PasteOptions options) {
         this(plugin, schematic, options, "#litematica");
     }
@@ -180,6 +214,8 @@ public final class PasteOperation {
                 ? BlockChangeLogger.noOp()
                 : owner.getBlockChangeLogger();
         this.offRegionExecutor = command -> FoliaCompat.runAsync(plugin, command);
+        this.regionTaskDispatcher = (world, cx, cz, task) ->
+                FoliaCompat.runOnRegion(this.plugin, world, cx, cz, task);
     }
 
     /**
@@ -434,7 +470,8 @@ public final class PasteOperation {
             String summary = "paste complete: " + blocksPlaced.get() + " blocks, "
                     + tilesPlaced.get() + " TE, "
                     + entitiesSpawned.get() + " entities, "
-                    + errors.size() + " err in " + ms + "ms";
+                    + errors.size() + " err in " + ms + "ms ("
+                    + batchTasksDispatched.get() + " region batch tasks)";
             // Always log to plugin logger so latest.log captures completion
             // (RCON-only senders won't see Component.text replies in the log).
             LOG.info(summary);
@@ -468,14 +505,22 @@ public final class PasteOperation {
         final PlacementTransform.Mir mirG = options.mirror();
         final PlacementTransform.Rot rotS = override == null
                 ? PlacementTransform.Rot.NONE : override.rotation();
-        final PlacementTransform.Mir mirS = PlacementTransform.effectiveSubMirror(
-                override == null ? PlacementTransform.Mir.NONE : override.mirror(), rotG);
+        // RAW sub-region mirror: used for POSITION mapping only. Upstream
+        // PositionUtils.getTransformedPlacementPosition feeds the unswapped
+        // placement.getMirror() into the position transform.
+        final PlacementTransform.Mir mirSRaw = override == null
+                ? PlacementTransform.Mir.NONE : override.mirror();
+        // Axis-SWAPPED sub-region mirror under a global quarter turn: used
+        // for block-STATE orientation and entity yaw only (upstream
+        // SchematicPlacingUtils / WorldPlacingUtils mirrorSub). Feeding this
+        // into positions mirrored them along the wrong axis (defect 1).
+        final PlacementTransform.Mir mirS = PlacementTransform.effectiveSubMirror(mirSRaw, rotG);
         // Combined state transform for directional blocks / entity yaw.
         final PlacementTransform.Rot rotC = rotG.combine(rotS);
         final boolean identity = rotG == PlacementTransform.Rot.NONE
                 && rotS == PlacementTransform.Rot.NONE
                 && mirG == PlacementTransform.Mir.NONE
-                && mirS == PlacementTransform.Mir.NONE;
+                && mirSRaw == PlacementTransform.Mir.NONE;
 
         final ReplaceBehavior replace = options.replaceBehavior();
         final LayerFilter filter = options.layerFilter();
@@ -540,8 +585,10 @@ public final class PasteOperation {
                 + (override != null && override.hasPos()
                         ? " override (" + effX + "," + effY + "," + effZ + ")" : "")
                 + " rotG=" + rotG + " mirG=" + mirG
-                + (rotS != PlacementTransform.Rot.NONE || mirS != PlacementTransform.Mir.NONE
-                        ? " rotS=" + rotS + " mirS=" + mirS : "")
+                + (rotS != PlacementTransform.Rot.NONE || mirSRaw != PlacementTransform.Mir.NONE
+                        ? " rotS=" + rotS + " mirS=" + mirSRaw
+                                + (mirS != mirSRaw ? " (state " + mirS + ")" : "")
+                        : "")
                 + " replace=" + replace
                 + (filter != null ? " " + filter : "")
                 + " -> world base (" + baseX + "," + baseY + "," + baseZ + "), size "
@@ -563,8 +610,8 @@ public final class PasteOperation {
                     BlockData data = paletteData[paletteIdx];
                     if (data == null) continue;
 
-                    int[] t1 = PlacementTransform.transformInt(dX + rx, dZ + rz, mirG, rotG);
-                    int[] t2 = PlacementTransform.transformInt(t1[0], t1[1], mirS, rotS);
+                    int[] t2 = PlacementTransform.transformPlacementInt(
+                            dX + rx, dZ + rz, mirG, rotG, mirSRaw, rotS);
                     int wx = baseX + t2[0];
                     int wz = baseZ + t2[1];
 
@@ -590,8 +637,8 @@ public final class PasteOperation {
                 Integer ty = c.getInt("y");
                 Integer tz = c.getInt("z");
                 if (tx == null || ty == null || tz == null) continue;
-                int[] t1 = PlacementTransform.transformInt(dX + tx, dZ + tz, mirG, rotG);
-                int[] t2 = PlacementTransform.transformInt(t1[0], t1[1], mirS, rotS);
+                int[] t2 = PlacementTransform.transformPlacementInt(
+                        dX + tx, dZ + tz, mirG, rotG, mirSRaw, rotS);
                 int wx = baseX + t2[0];
                 int wy = baseY + dY + ty;
                 int wz = baseZ + t2[1];
@@ -615,8 +662,8 @@ public final class PasteOperation {
                 double ex = doubleOf(posList.get(0));
                 double ey = doubleOf(posList.get(1));
                 double ez = doubleOf(posList.get(2));
-                double[] v1 = PlacementTransform.transformVec(ex, ez, mirG, rotG);
-                double[] v2 = PlacementTransform.transformVec(v1[0], v1[1], mirS, rotS);
+                double[] v2 = PlacementTransform.transformPlacementVec(
+                        ex, ez, mirG, rotG, mirSRaw, rotS);
                 double wx = baseX + v2[0];
                 double wy = baseY + ey;
                 double wz = baseZ + v2[1];
@@ -633,7 +680,7 @@ public final class PasteOperation {
             if (region.pendingBlockTicks != null) {
                 for (LitematicNbt.NbtTag tag : region.pendingBlockTicks.values()) {
                     PendingTick pt = translateTick(tag, baseX, baseY, baseZ, dX, dY, dZ,
-                            mirG, rotG, mirS, rotS);
+                            mirG, rotG, mirSRaw, rotS);
                     if (pt == null) continue;
                     if (filter != null && !filter.test(pt.x, pt.y, pt.z)) continue;
                     ChunkKey key = new ChunkKey(pt.x >> 4, pt.z >> 4);
@@ -643,7 +690,7 @@ public final class PasteOperation {
             if (region.pendingFluidTicks != null) {
                 for (LitematicNbt.NbtTag tag : region.pendingFluidTicks.values()) {
                     PendingTick pt = translateTick(tag, baseX, baseY, baseZ, dX, dY, dZ,
-                            mirG, rotG, mirS, rotS);
+                            mirG, rotG, mirSRaw, rotS);
                     if (pt == null) continue;
                     if (filter != null && !filter.test(pt.x, pt.y, pt.z)) continue;
                     ChunkKey key = new ChunkKey(pt.x >> 4, pt.z >> 4);
@@ -657,14 +704,15 @@ public final class PasteOperation {
                                              int baseX, int baseY, int baseZ,
                                              int dX, int dY, int dZ,
                                              PlacementTransform.Mir mirG, PlacementTransform.Rot rotG,
-                                             PlacementTransform.Mir mirS, PlacementTransform.Rot rotS) {
+                                             PlacementTransform.Mir mirSRaw, PlacementTransform.Rot rotS) {
         if (!(tag instanceof LitematicNbt.NbtCompound c)) return null;
         Integer tx = c.getInt("x");
         Integer ty = c.getInt("y");
         Integer tz = c.getInt("z");
         if (tx == null || ty == null || tz == null) return null;
-        int[] t1 = PlacementTransform.transformInt(dX + tx, dZ + tz, mirG, rotG);
-        int[] t2 = PlacementTransform.transformInt(t1[0], t1[1], mirS, rotS);
+        // Positions take the RAW sub mirror (see transformPlacementInt doc).
+        int[] t2 = PlacementTransform.transformPlacementInt(
+                dX + tx, dZ + tz, mirG, rotG, mirSRaw, rotS);
         return new PendingTick(baseX + t2[0], baseY + dY + ty, baseZ + t2[1], c);
     }
 
@@ -694,11 +742,11 @@ public final class PasteOperation {
      * region thread itself via {@code runOnRegion} which never blocks — the
      * v0.4.x "no blocking acquire on a region thread" rule is preserved.
      */
-    private CompletableFuture<Void> runChunkBatched(World world, ChunkKey key,
-                                                    List<PendingWrite> writes, Runnable tail,
-                                                    AtomicLong blockCounter,
-                                                    ConcurrentLinkedQueue<String> errors,
-                                                    String phase) {
+    CompletableFuture<Void> runChunkBatched(World world, ChunkKey key,
+                                            List<PendingWrite> writes, Runnable tail,
+                                            AtomicLong blockCounter,
+                                            ConcurrentLinkedQueue<String> errors,
+                                            String phase) {
         CompletableFuture<Void> done = new CompletableFuture<>();
         scheduleChunkBatch(world, key, writes, 0, tail, done, blockCounter, errors, phase);
         return done;
@@ -710,7 +758,11 @@ public final class PasteOperation {
                                     ConcurrentLinkedQueue<String> errors, String phase) {
         CompletableFuture<Void> f;
         try {
-            f = FoliaCompat.runOnRegion(plugin, world, key.cx, key.cz, () -> {
+            // Counted BEFORE the dispatch so the completion summary can never
+            // race a region thread that runs the task instantly (a failed
+            // dispatch decrements in the catch below).
+            batchTasksDispatched.incrementAndGet();
+            f = regionTaskDispatcher.dispatch(world, key.cx, key.cz, () -> {
                 int batch = Math.max(1, options.maxBlocksPerChunkTask());
                 int to = Math.min(writes.size(), from + batch);
                 try {
@@ -740,6 +792,7 @@ public final class PasteOperation {
                 done.complete(null);
             });
         } catch (Throwable t) {
+            batchTasksDispatched.decrementAndGet();
             errors.add("dispatch " + phase + " chunk (" + key.cx + "," + key.cz + "): "
                     + t.getClass().getSimpleName() + " " + t.getMessage());
             done.complete(null);
@@ -926,9 +979,11 @@ public final class PasteOperation {
 
     // ---------------------------------------------------- internal data types
 
-    private record ChunkKey(int cx, int cz) {}
+    // Package-private so the batching unit test can build a synthetic
+    // write list and drive runChunkBatched directly.
+    record ChunkKey(int cx, int cz) {}
 
-    private record PendingWrite(int x, int y, int z, BlockData data) {}
+    record PendingWrite(int x, int y, int z, BlockData data) {}
 
     private record PendingTileEntity(int x, int y, int z, LitematicNbt.NbtCompound nbt) {}
 

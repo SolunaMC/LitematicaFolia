@@ -28,16 +28,29 @@ found during verification. Semantics are matched to upstream Litematica
   not an integer rotation with re-attached fractions. Note the issue's
   suggested plain negation would shift entities into the neighbouring
   block cell; upstream's `1.0-v` convention is reproduced exactly.
-- **Entity orientation** (#4.4): entities are spawned through NMS
-  `Entity#mirror`/`Entity#rotate` (vanilla StructureTemplate semantics),
-  so yaw follows the placement rotation and hanging entities (item
-  frames, paintings) also rotate their facing.
+- **Entity orientation** (#4.4): entities are spawned with the Litematica
+  CLIENT's `rotateEntity` yaw convention (the formula used by both the
+  client's placement preview, `WorldPlacingUtils.rotateEntity`, and the
+  client's own paste, `SchematicPlacingUtils.rotateEntity`): the yaw goes
+  DOWN by 90 on a clockwise quarter turn, the sub-region mirror's yaw
+  replaces (not composes with) the main mirror's, and hanging entities
+  (item frames, paintings) still rotate their facing through the NMS
+  `Entity#mirror`/`Entity#rotate` side effects. Note this deliberately
+  diverges from vanilla StructureTemplate semantics (which would add 90):
+  the fidelity target is what the client preview shows. An earlier 0.8.0
+  build used the vanilla convention and was 180 degrees off the client
+  preview on quarter turns.
 - **SubRegions overrides** (#4.5): per-region `Pos` override, `Rotation`,
   `Mirror`, `Enabled` and `IgnoreEntities` from the placement's
   `SubRegions` compound are applied. Disabled regions are skipped
   entirely; moved regions paste at the client-visible position;
   per-region rotations compose with the global rotation exactly like
-  upstream (`getRotated`, sub-mirror axis swap under quarter turns).
+  upstream (`getRotated`). The quarter-turn sub-mirror axis swap applies
+  to block-state orientation and entity yaw ONLY; position mapping uses
+  the raw sub mirror, matching upstream
+  `PositionUtils.getTransformedPlacementPosition` (an earlier 0.8.0 build
+  fed the swapped mirror into positions and mirrored a sub-region along
+  the wrong axis whenever it combined with a global 90/270 rotation).
 - **PasteLayerBehavior + RenderLayerRange** (#4.6): `rendered_only`
   pastes filter blocks, tile entities, entities and pending ticks by the
   transmitted layer range on final world coordinates (all modes:
@@ -47,7 +60,10 @@ found during verification. Semantics are matched to upstream Litematica
   the chunk task yields back to the region scheduler between batches.
   Phase order (pass 1 blocks -> tile entities -> pass 2 active blocks ->
   entities/ticks -> physics sweep) is preserved; the chunk-throttle
-  permit spans a chunk's whole batch chain.
+  permit spans a chunk's whole batch chain. The yield is now positively
+  asserted: the completion log reports the region-batch-task count
+  (checked by the fidelity smoke) and a unit test drives the batch chain
+  through a stub scheduler.
 
 ### Fixed - related gaps found during the issue #4 audit
 
@@ -61,16 +77,32 @@ found during verification. Semantics are matched to upstream Litematica
   (coordinates, block states, entity yaw/facing). 0.7.0 warned
   "mirror is not supported yet" and pasted unmirrored.
 
+### Fixed - save entity capture dedup
+
+- `/litematica save` captured entities per chunk with
+  `getNearbyEntities(BoundingBox)`, which matches by AABB INTERSECTION:
+  an entity whose hitbox straddles a chunk border was captured in TWO
+  chunk tasks and saved twice. Capture now dedupes by entity UUID across
+  chunk tasks (AABB-intersection inclusion is kept, matching upstream's
+  single-region-box `getEntitiesOfClass` save semantics).
+
 ### Testing
 
 - New unit battery `PlacementFidelityTest` (transforms, composition,
-  sub-mirror swap, wire parsing, layer filter, SubRegions parsing).
-- New E2E harness `test-harness/fidelity-smoke.sh`: real Folia 26.2
-  server, superflat world, ProtocolBot wire-v2 pastes across six
+  sub-mirror swap and the raw-vs-swapped position rule, the client
+  `rotateEntity` yaw formula, wire parsing, layer filter, SubRegions
+  parsing) plus `PasteBatchingTest` (a >cap chunk write list provably
+  splits into multiple region tasks through a stub scheduler).
+- E2E harness `test-harness/fidelity-smoke.sh`: real Folia 26.2
+  server, superflat world, ProtocolBot wire-v2 pastes across twelve
   scenarios (three replace modes, CW90 rotation with entity/stairs
   assertions via paste-save-dump round trip, SubRegions move+disable,
-  single-layer paste), with `maxBlocksPerChunkTask=16` so every paste
-  also exercises the batching path.
+  single-layer paste, FRONT_BACK and LEFT_RIGHT global mirrors, CW90
+  combined with a global mirror, a sub-region rotation, the
+  sub-mirror-under-global-CW90 position bug case with entity yaw, and a
+  border-straddling-entity save dedup scenario), with
+  `maxBlocksPerChunkTask=16` so every paste also exercises the batching
+  path, and a positive assertion that the batching yield fired.
 
 ## 0.7.0+26.2 - 2026-08-25
 

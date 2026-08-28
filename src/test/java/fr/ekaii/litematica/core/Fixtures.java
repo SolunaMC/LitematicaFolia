@@ -330,12 +330,17 @@ public final class Fixtures {
     /**
      * Two-region fixture for the SubRegions-override E2E: region "A"
      * (2×2×2 stone at Position (0,0,0)) and region "B" (2×2×2
-     * diamond_block at Position (6,0,0)).
+     * diamond_block at Position (6,0,0)). Region "A" also carries one
+     * armor_stand at A-local (0.5, 1.0, 1.25) yaw 0, so the
+     * sub-mirror-under-global-rotation scenario (fidelity smoke S11) can
+     * assert entity position AND yaw through the sub-region composition.
      */
     public static LitematicSchematic twoTowers() {
         LitematicSchematic s = skeleton("two-towers", 8, 2, 2, 2);
 
-        s.regions.put("A", towerRegion("A", 0, "minecraft:stone"));
+        LitematicRegion a = towerRegion("A", 0, "minecraft:stone");
+        a.entities.values().add(simpleEntity("minecraft:armor_stand", 0.5, 1.0, 1.25, 0.0f));
+        s.regions.put("A", a);
         s.regions.put("B", towerRegion("B", 6, "minecraft:diamond_block"));
         s.metadata.totalBlocks = 16;
         return s;

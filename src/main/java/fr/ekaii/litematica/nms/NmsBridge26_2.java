@@ -135,23 +135,52 @@ public final class NmsBridge26_2 implements NmsBridge {
                     entityInput, level, net.minecraft.world.entity.EntitySpawnReason.LOAD,
                     entity -> {
                         entity.setUUID(java.util.UUID.randomUUID());
-                        // Placement orientation: Entity#mirror / Entity#rotate return
-                        // the transformed yaw, and for hanging entities (item frame,
-                        // painting) rotate() also updates the facing — vanilla
-                        // StructureTemplate.placeEntities semantics. Apply mirrors
-                        // first (main then sub), then the combined rotation, matching
-                        // upstream Litematica rotateEntity order.
+                        // Placement orientation: replicate the Litematica CLIENT's
+                        // rotateEntity VERBATIM (WorldPlacingUtils.rotateEntity, the
+                        // schematic-world PREVIEW path, identical in
+                        // SchematicPlacingUtils.rotateEntity, the client paste path):
+                        //
+                        //   float rotationYaw = entity.getYRot();
+                        //   if (mirrorMain != NONE) rotationYaw = entity.mirror(mirrorMain);
+                        //   if (mirrorSub  != NONE) rotationYaw = entity.mirror(mirrorSub);
+                        //   if (rot != NONE) rotationYaw += entity.getYRot() - entity.rotate(rot);
+                        //
+                        // The paste target is "match what the client preview shows",
+                        // so the upstream quirks are reproduced deliberately:
+                        //  - mirror()/rotate() read the entity's ORIGINAL yaw (no
+                        //    setYRot in between), so a sub mirror REPLACES the main
+                        //    mirror's yaw instead of composing;
+                        //  - vanilla Entity.rotate(CW90) returns wrap(yaw)+90, so the
+                        //    "yaw += getYRot() - rotate(rot)" line yields yaw-90 on a
+                        //    clockwise quarter turn: the OPPOSITE sense of vanilla
+                        //    StructureTemplate placement, but exactly what the client
+                        //    preview renders. Pure-math twin (unit-tested):
+                        //    PlacementTransform.transformYaw.
+                        // mirror()/rotate() are still invoked for their side effects
+                        // on hanging entities (item frame / painting facing updates).
+                        float rotationYaw = entity.getYRot();
                         if (mirrorMain != net.minecraft.world.level.block.Mirror.NONE) {
-                            entity.setYRot(entity.mirror(mirrorMain));
+                            rotationYaw = entity.mirror(mirrorMain);
                         }
                         if (mirrorSub != net.minecraft.world.level.block.Mirror.NONE) {
-                            entity.setYRot(entity.mirror(mirrorSub));
+                            rotationYaw = entity.mirror(mirrorSub);
                         }
                         if (rot != net.minecraft.world.level.block.Rotation.NONE) {
-                            entity.setYRot(entity.rotate(rot));
+                            rotationYaw += entity.getYRot() - entity.rotate(rot);
                         }
                         entity.snapTo(loc.getX(), loc.getY(), loc.getZ(),
-                                entity.getYRot(), entity.getXRot());
+                                rotationYaw, entity.getXRot());
+                        // Upstream EntityUtils.setEntityRotations: pin head/body yaw
+                        // (and their prev-tick fields) so livings render the pasted
+                        // yaw immediately, like the client preview does.
+                        entity.setYRot(rotationYaw);
+                        entity.yRotO = rotationYaw;
+                        if (entity instanceof net.minecraft.world.entity.LivingEntity living) {
+                            living.yHeadRot = rotationYaw;
+                            living.yBodyRot = rotationYaw;
+                            living.yHeadRotO = rotationYaw;
+                            living.yBodyRotO = rotationYaw;
+                        }
                         return entity;
                     });
             if (spawned == null) return null;
