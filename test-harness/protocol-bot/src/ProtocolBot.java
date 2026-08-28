@@ -149,7 +149,7 @@ public final class ProtocolBot {
                         Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2])});
             }
             c.putInt("Rotation", p.length > 3 ? Integer.parseInt(p[3]) : 0);
-            c.putInt("Mirror", 0);
+            c.putInt("Mirror", p.length > 4 ? Integer.parseInt(p[4]) : 0);
             c.putByte("IgnoreEntities", (byte) 0);
             subs.put(name, c);
         }
@@ -982,7 +982,7 @@ public final class ProtocolBot {
                     layerSingleAxis = p[0];
                     layerSingleValue = Integer.parseInt(p[1]);
                 }
-                // --sub-region <name>:<enabled 0|1>:<posX,posY,posZ or ->:<rotOrdinal>
+                // --sub-region <name>:<enabled 0|1>:<posX,posY,posZ or ->:<rotOrdinal>[:<mirrorOrdinal>]
                 // (repeatable). "-" for pos means "no Pos override sent".
                 case "--sub-region" -> subRegionSpecs.add(args[++i]);
                 default -> System.err.println("unknown arg: " + args[i]);

@@ -55,14 +55,19 @@ public interface NmsBridge {
      * Spawn an entity at {@code loc} loaded from {@code nbt}, applying the
      * placement orientation transform to the entity itself (yaw, and the
      * facing of hanging entities such as item frames / paintings, via NMS
-     * {@code Entity#mirror} / {@code Entity#rotate} — vanilla
-     * StructureTemplate semantics, issue #4.4).
+     * {@code Entity#mirror} / {@code Entity#rotate}). The yaw convention is
+     * the Litematica CLIENT's {@code rotateEntity} formula (yaw MINUS 90 on
+     * a clockwise quarter turn, sub mirror replacing the main mirror's yaw),
+     * matching the client's placement preview, NOT vanilla StructureTemplate
+     * semantics. See {@code PlacementTransform#transformYaw} (issue #4.4).
      *
      * <p>Ordinals follow the vanilla enums: rotation
      * {@code NONE, CLOCKWISE_90, CLOCKWISE_180, COUNTERCLOCKWISE_90};
      * mirror {@code NONE, LEFT_RIGHT, FRONT_BACK}. Mirrors apply first
-     * (main, then sub), then the combined rotation — upstream Litematica
-     * {@code rotateEntity} order.
+     * (main, then sub), then the combined rotation, in upstream Litematica
+     * {@code rotateEntity} order. {@code mirrorSubOrdinal} carries the
+     * axis-SWAPPED sub mirror ({@code PlacementTransform#effectiveSubMirror}),
+     * like the upstream call site.
      *
      * <p>The default implementation ignores the transform and delegates to
      * {@link #spawnEntityFromNbt(Location, LitematicNbt.NbtTag)} so no-op /

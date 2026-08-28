@@ -110,6 +110,94 @@ class PlacementFidelityTest {
         assertEquals(Mir.NONE, PlacementTransform.effectiveSubMirror(Mir.NONE, Rot.CLOCKWISE_90));
     }
 
+    // ------------------------------------------------ defect 1: positions use RAW sub mirror
+
+    @Test
+    void sub_mirror_positions_use_unswapped_mirror_under_global_quarter_turn() {
+        // Audit counterexample: region-local (1,2), global rot CW90, sub
+        // mirror FRONT_BACK. Upstream getTransformedPlacementPosition:
+        // Tg: (1,2) -> (-2,1); then FRONT_BACK (x=-x), UNSWAPPED -> (2,1).
+        assertArrayEquals(new int[] {2, 1}, PlacementTransform.transformPlacementInt(
+                1, 2, Mir.NONE, Rot.CLOCKWISE_90, Mir.FRONT_BACK, Rot.NONE));
+        // The pre-fix code fed the axis-SWAPPED mirror (LEFT_RIGHT) into the
+        // position transform and produced (-2,-1): mirrored along the wrong
+        // axis. Pin the distinction so a regression is caught immediately.
+        int[] tg = PlacementTransform.transformInt(1, 2, Mir.NONE, Rot.CLOCKWISE_90);
+        assertArrayEquals(new int[] {-2, -1}, PlacementTransform.transformInt(
+                tg[0], tg[1],
+                PlacementTransform.effectiveSubMirror(Mir.FRONT_BACK, Rot.CLOCKWISE_90),
+                Rot.NONE),
+                "swapped-mirror composition must stay distinguishable from the correct one");
+
+        // CCW90 + LEFT_RIGHT sub: Tg: (1,2) -> (2,-1); LEFT_RIGHT (z=-z) -> (2,1).
+        assertArrayEquals(new int[] {2, 1}, PlacementTransform.transformPlacementInt(
+                1, 2, Mir.NONE, Rot.COUNTERCLOCKWISE_90, Mir.LEFT_RIGHT, Rot.NONE));
+        // Global 180: no axis swap applies anyway. Tg: (-1,-2); FB -> (1,-2).
+        assertArrayEquals(new int[] {1, -2}, PlacementTransform.transformPlacementInt(
+                1, 2, Mir.NONE, Rot.CLOCKWISE_180, Mir.FRONT_BACK, Rot.NONE));
+        // Sub rotation only: Ts CW90 on (1,2) -> (-2,1).
+        assertArrayEquals(new int[] {-2, 1}, PlacementTransform.transformPlacementInt(
+                1, 2, Mir.NONE, Rot.NONE, Mir.NONE, Rot.CLOCKWISE_90));
+        // two-towers S11 cells: A local (1,0) under rotG=CW90 + sub FRONT_BACK
+        // lands at world delta (0,1); local (1,1) at (1,1).
+        assertArrayEquals(new int[] {0, 1}, PlacementTransform.transformPlacementInt(
+                1, 0, Mir.NONE, Rot.CLOCKWISE_90, Mir.FRONT_BACK, Rot.NONE));
+        assertArrayEquals(new int[] {1, 1}, PlacementTransform.transformPlacementInt(
+                1, 1, Mir.NONE, Rot.CLOCKWISE_90, Mir.FRONT_BACK, Rot.NONE));
+    }
+
+    @Test
+    void sub_mirror_entity_positions_use_unswapped_mirror_too() {
+        // Same convention for the double (entity) transform: upstream
+        // placeEntitiesToWorldWithinChunk chains getTransformedPosition with
+        // the RAW placement.getMirror().
+        // Tg CW90: (1.5, 2.25) -> (1-2.25, 1.5) = (-1.25, 1.5);
+        // FRONT_BACK: x = 1-x -> (2.25, 1.5).
+        assertArrayEquals(new double[] {2.25, 1.5}, PlacementTransform.transformPlacementVec(
+                1.5, 2.25, Mir.NONE, Rot.CLOCKWISE_90, Mir.FRONT_BACK, Rot.NONE), 1e-9);
+        // No sub override: composition degenerates to the global transform.
+        assertArrayEquals(
+                PlacementTransform.transformVec(1.5, 2.25, Mir.LEFT_RIGHT, Rot.CLOCKWISE_90),
+                PlacementTransform.transformPlacementVec(
+                        1.5, 2.25, Mir.LEFT_RIGHT, Rot.CLOCKWISE_90, Mir.NONE, Rot.NONE), 1e-9);
+    }
+
+    // ------------------------------------------------ defect 2: client entity yaw convention
+
+    @Test
+    void entity_yaw_matches_client_rotate_entity_formula() {
+        // Client rotateEntity (WorldPlacingUtils / SchematicPlacingUtils):
+        // yaw += getYRot() - rotate(rot), where vanilla Entity.rotate(CW90)
+        // returns wrap(yaw)+90. Net effect: yaw MINUS the rotation degrees,
+        // the OPPOSITE of vanilla StructureTemplate placement on quarter
+        // turns. This is what the client preview renders, so it is what the
+        // server paste must produce.
+        assertEquals(-90.0f, PlacementTransform.transformYaw(0.0f, Mir.NONE, Mir.NONE, Rot.CLOCKWISE_90));
+        assertEquals(-270.0f, PlacementTransform.transformYaw(0.0f, Mir.NONE, Mir.NONE, Rot.COUNTERCLOCKWISE_90));
+        assertEquals(-135.0f, PlacementTransform.transformYaw(45.0f, Mir.NONE, Mir.NONE, Rot.CLOCKWISE_180));
+        // Unwrapped input keeps the upstream wrap quirk: 270 -> 270+270-0 = 540 (== 180 mod 360).
+        assertEquals(540.0f, PlacementTransform.transformYaw(270.0f, Mir.NONE, Mir.NONE, Rot.CLOCKWISE_90));
+        // Vanilla Entity.mirror return values (verified against the mapped
+        // 26.2 bytecode): FRONT_BACK -> -yaw, LEFT_RIGHT -> 180-yaw.
+        // Consistent with the position mirror: LEFT_RIGHT flips Z
+        // (south<->north), FRONT_BACK flips X (west<->east).
+        assertEquals(-30.0f, PlacementTransform.transformYaw(30.0f, Mir.FRONT_BACK, Mir.NONE, Rot.NONE));
+        assertEquals(150.0f, PlacementTransform.transformYaw(30.0f, Mir.LEFT_RIGHT, Mir.NONE, Rot.NONE));
+        // Upstream quirk: the sub mirror is recomputed from the ORIGINAL yaw
+        // and REPLACES the main-mirror value (it does not compose).
+        assertEquals(-30.0f, PlacementTransform.transformYaw(30.0f, Mir.LEFT_RIGHT, Mir.FRONT_BACK, Rot.NONE));
+        // Mirror + rotation compose additively on the rotation step:
+        // FRONT_BACK on yaw 0 -> -0, then CW90 -> -90 (S9 armor stand,
+        // E2E-confirmed in-world).
+        assertEquals(-90.0f, PlacementTransform.transformYaw(0.0f, Mir.FRONT_BACK, Mir.NONE, Rot.CLOCKWISE_90));
+        // S11 armor stand: sub mirror FRONT_BACK swapped to LEFT_RIGHT for
+        // yaw under global CW90, yaw 0 -> 180, then rotC CW90 -> 90
+        // (E2E-confirmed in-world).
+        assertEquals(90.0f, PlacementTransform.transformYaw(0.0f, Mir.NONE,
+                PlacementTransform.effectiveSubMirror(Mir.FRONT_BACK, Rot.CLOCKWISE_90),
+                Rot.CLOCKWISE_90));
+    }
+
     // ------------------------------------------------ wire parsing
 
     @Test

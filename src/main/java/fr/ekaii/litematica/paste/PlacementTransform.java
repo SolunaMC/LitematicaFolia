@@ -127,8 +127,17 @@ public final class PlacementTransform {
 
     /**
      * When the global placement rotation is a quarter turn, a sub-region
-     * mirror's axis flips meaning. Replicates the swap in upstream
-     * {@code SchematicPlacingUtils.placeBlocksWithinChunk}.
+     * mirror's axis flips meaning for BLOCK-STATE orientation and ENTITY
+     * yaw. Replicates the swap in upstream
+     * {@code SchematicPlacingUtils.placeBlocksWithinChunk} /
+     * {@code WorldPlacingUtils.placeBlocksToProtoChunk}.
+     *
+     * <p><strong>Never use the swapped mirror for POSITION mapping.</strong>
+     * Upstream {@code PositionUtils.getTransformedPlacementPosition} feeds the
+     * raw {@code placement.getMirror()} into the position transform; only the
+     * {@code state.mirror(mirrorSub)} / {@code rotateEntity(...)} calls see
+     * the swapped value. Use {@link #transformPlacementInt} /
+     * {@link #transformPlacementVec} for positions instead.
      */
     public static Mir effectiveSubMirror(Mir subMirror, Rot globalRotation) {
         if (subMirror != Mir.NONE
@@ -136,6 +145,111 @@ public final class PlacementTransform {
             return subMirror == Mir.FRONT_BACK ? Mir.LEFT_RIGHT : Mir.FRONT_BACK;
         }
         return subMirror;
+    }
+
+    /**
+     * Full sub-region POSITION composition for integer (block) coordinates:
+     * global mirror+rotation first, then the sub-region's mirror+rotation
+     * with the RAW (unswapped) sub mirror. Replicates upstream
+     * {@code PositionUtils.getTransformedPlacementPosition}:
+     * <pre>
+     * pos = getTransformedBlockPos(pos, schematicPlacement.getMirror(), schematicPlacement.getRotation());
+     * pos = getTransformedBlockPos(pos, placement.getMirror(), placement.getRotation());
+     * </pre>
+     * The quarter-turn axis swap ({@link #effectiveSubMirror}) applies only
+     * to block-state orientation and entity yaw, never here. Feeding the
+     * swapped mirror into this composition mirrored positions along the
+     * wrong axis when a sub-region mirror combined with a global 90/270
+     * rotation (issue #4 follow-up defect 1).
+     */
+    public static int[] transformPlacementInt(int x, int z, Mir mirG, Rot rotG,
+                                              Mir subMirrorRaw, Rot rotS) {
+        int[] t = transformInt(x, z, mirG, rotG);
+        return transformInt(t[0], t[1], subMirrorRaw, rotS);
+    }
+
+    /**
+     * Full sub-region POSITION composition for double (entity) coordinates.
+     * Same convention as {@link #transformPlacementInt}; replicates the two
+     * chained {@code PositionUtils.getTransformedPosition} calls in upstream
+     * {@code placeEntitiesToWorldWithinChunk} /
+     * {@code WorldPlacingUtils.prepareEntitiesInProtoChunk}, which also use
+     * the RAW {@code placement.getMirror()}.
+     */
+    public static double[] transformPlacementVec(double x, double z, Mir mirG, Rot rotG,
+                                                 Mir subMirrorRaw, Rot rotS) {
+        double[] t = transformVec(x, z, mirG, rotG);
+        return transformVec(t[0], t[1], subMirrorRaw, rotS);
+    }
+
+    /** Vanilla {@code Mth.wrapDegrees}: wraps into [-180, 180). */
+    private static float wrapDegrees(float value) {
+        float f = value % 360.0F;
+        if (f >= 180.0F) f -= 360.0F;
+        if (f < -180.0F) f += 360.0F;
+        return f;
+    }
+
+    /**
+     * Default vanilla {@code Entity#mirror} return value (yaw only),
+     * verified against the mapped 26.2 server bytecode
+     * ({@code Entity.mirror} switch: FRONT_BACK is the {@code -f} arm,
+     * LEFT_RIGHT the {@code 180 - f} arm). Geometrically consistent with
+     * the position transform: LEFT_RIGHT flips Z (south/north, yaw 0/180),
+     * FRONT_BACK flips X (west/east, yaw 90/-90).
+     */
+    private static float mirrorYaw(float yaw, Mir mirror) {
+        float f = wrapDegrees(yaw);
+        return switch (mirror) {
+            case FRONT_BACK -> -f;
+            case LEFT_RIGHT -> 180.0F - f;
+            default -> f;
+        };
+    }
+
+    /**
+     * Entity yaw under a placement transform, exactly as the Litematica
+     * CLIENT computes it for both its schematic-world PREVIEW
+     * ({@code WorldPlacingUtils.rotateEntity}) and its own paste
+     * ({@code SchematicPlacingUtils.rotateEntity}):
+     * <pre>
+     * float rotationYaw = entity.getYRot();
+     * if (mirrorMain != NONE) rotationYaw = entity.mirror(mirrorMain);
+     * if (mirrorSub  != NONE) rotationYaw = entity.mirror(mirrorSub);
+     * if (rotationCombined != NONE) rotationYaw += entity.getYRot() - entity.rotate(rotationCombined);
+     * </pre>
+     * Three deliberate upstream quirks reproduced faithfully, because the
+     * server-side paste must land entities the way the client preview
+     * showed them:
+     * <ul>
+     *   <li>{@code entity.mirror}/{@code entity.rotate} read the entity's
+     *       ORIGINAL yaw, so the sub-mirror value REPLACES the main-mirror
+     *       value instead of composing with it;</li>
+     *   <li>vanilla {@code Entity.rotate(CLOCKWISE_90)} returns
+     *       {@code wrap(yaw) + 90}, so the client's
+     *       {@code yaw += getYRot() - rotate(rot)} yields {@code yaw - 90}
+     *       on a clockwise quarter turn. That is the OPPOSITE sense of
+     *       vanilla StructureTemplate placement (and of the block/position
+     *       rotation), but it is what the client preview renders;</li>
+     *   <li>{@code mirrorSub} here is the axis-SWAPPED sub mirror
+     *       ({@link #effectiveSubMirror}), matching the client call site.</li>
+     * </ul>
+     * This is the pure-math model for the default {@code Entity}
+     * implementation; the NMS path ({@code NmsBridge26_2.spawnEntityFromNbt})
+     * calls the real {@code Entity#mirror}/{@code Entity#rotate} with the
+     * same structure so hanging-entity overrides (item frame / painting
+     * facing) keep their side effects.
+     */
+    public static float transformYaw(float yaw, Mir mirrorMain, Mir mirrorSub, Rot rotationCombined) {
+        float rotationYaw = yaw;
+        if (mirrorMain != Mir.NONE) rotationYaw = mirrorYaw(yaw, mirrorMain);
+        if (mirrorSub != Mir.NONE) rotationYaw = mirrorYaw(yaw, mirrorSub);
+        if (rotationCombined != Rot.NONE) {
+            // vanilla Entity.rotate returns wrap(yaw) + degrees
+            float rotated = wrapDegrees(yaw) + rotationCombined.degrees;
+            rotationYaw += yaw - rotated;
+        }
+        return rotationYaw;
     }
 
     /**
