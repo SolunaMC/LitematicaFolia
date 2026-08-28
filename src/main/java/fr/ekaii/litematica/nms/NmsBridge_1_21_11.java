@@ -39,7 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.logging.Logger;
 
 /**
- * Paper 26.2 NMS bridge implementation. Depends on mojang-mapped
+ * Paper/Folia 1.21.11 NMS bridge implementation. Depends on mojang-mapped
  * {@code net.minecraft.*} classes via paperweight-userdev.
  *
  * <p>All public methods are designed to be called from the chunk's owning
@@ -51,13 +51,13 @@ import java.util.logging.Logger;
  * will eventually re-tick and pick up the changes). Other errors are
  * re-thrown.
  */
-public final class NmsBridge26_2 implements NmsBridge {
+public final class NmsBridge_1_21_11 implements NmsBridge {
 
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/NmsBridge");
 
     private final int currentDataVersion;
 
-    public NmsBridge26_2() {
+    public NmsBridge_1_21_11() {
         this.currentDataVersion = SharedConstants.getCurrentVersion().dataVersion().version();
     }
 
@@ -89,7 +89,7 @@ public final class NmsBridge26_2 implements NmsBridge {
             cleaned.remove("y");
             cleaned.remove("z");
             cleaned.remove("id");
-            // TagValueInput.create returns a ValueInput in 26.2 — use var.
+            // TagValueInput.create returns a ValueInput on 1.21.11 (same API as 26.x) — use var.
             var input = TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), cleaned);
             be.loadWithComponents(input);
             be.setChanged();
@@ -128,8 +128,11 @@ public final class NmsBridge26_2 implements NmsBridge {
             net.minecraft.world.level.block.Rotation rot = nmsRotation(rotationOrdinal);
             net.minecraft.world.level.block.Mirror mirrorMain = nmsMirror(mirrorMainOrdinal);
             net.minecraft.world.level.block.Mirror mirrorSub = nmsMirror(mirrorSubOrdinal);
-            // 26.2: the CompoundTag overload now pairs with EntitySpawnRequest;
-            // keep EntitySpawnReason.LOAD by going through the ValueInput overload.
+            // 1.21.11: EntityType.loadEntityRecursive has both a CompoundTag and
+            // a ValueInput overload (EntityType.java:1493/:1513 in the 1.21.11
+            // dev-bundle sources); use the ValueInput one with
+            // EntitySpawnReason.LOAD + ProblemReporter.DISCARDING, identical
+            // to the 26.2 bridge.
             var entityInput = TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), tag);
             Entity spawned = EntityType.loadEntityRecursive(
                     entityInput, level, net.minecraft.world.entity.EntitySpawnReason.LOAD,
@@ -279,8 +282,9 @@ public final class NmsBridge26_2 implements NmsBridge {
     }
 
     // ------------------------------------------------------------------ Extraction (save v2)
-    // 2026-05-24: real NMS impl. saveWithFullMetadata(HolderLookup.Provider)
-    // is the canonical capture API on 26.x for BlockEntities; Entity#save
+    // saveWithFullMetadata(HolderLookup.Provider) is the canonical capture
+    // API on 1.21.11 (BlockEntity.java:108 in the dev-bundle sources), same
+    // shape as 26.x; Entity#save
     // takes a ValueOutput (TagValueOutput.createWithContext builds
     // one against a problem reporter + registry access).
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fidelity-smoke.sh — E2E battery for issue #4 (Servux placement fidelity).
 #
-# Boots ONE hermetic Folia/Paper 26.2 server on a superflat world (surface
+# Boots ONE hermetic Folia/Paper server (this branch: 1.21.11, protocol 774) on a superflat world (surface
 # y=-61, everything above is air), then drives ProtocolBot through the
 # Direct-Paste scenarios over wire v2 and asserts world state via RCON
 # setblock-replace probes ("Could not set" == block already in exactly the

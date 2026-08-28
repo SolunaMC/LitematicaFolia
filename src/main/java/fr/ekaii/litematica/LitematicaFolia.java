@@ -35,16 +35,16 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
     }
 
     /**
-     * This build drives NMS through NmsBridge26_2 and ships PacketEvents
-     * mapped for the 26.2 wire, so it must refuse to run anywhere else.
-     * Bukkit's api-version does NOT reject a plugin NEWER than the server
-     * (Paper and Leaves 1.21.11 both enable this 26.2 build without a
-     * complaint), and a version-mismatched packet pipeline corrupts client
-     * connections instead of failing cleanly (issue #3: every join on a
-     * Leaves 1.21.11 server died on a garbage clientbound packet).
+     * This build drives NMS through NmsBridge_1_21_11 and ships
+     * PacketEvents mapped for the 1.21.11 wire (protocol 774), so it must
+     * refuse to run anywhere else. Bukkit's api-version does NOT reject a
+     * plugin NEWER than the server, and a version-mismatched packet
+     * pipeline corrupts client connections instead of failing cleanly
+     * (issue #3 / issue #5: joins died on a garbage clientbound packet /
+     * "void future").
      */
     private static boolean isSupportedServerVersion(String mc) {
-        return mc.equals("26.2") || mc.startsWith("26.2.");
+        return mc.equals("1.21.11") || mc.startsWith("1.21.11");
     }
 
     @Override
@@ -52,9 +52,10 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         supportedServer = isSupportedServerVersion(getServer().getMinecraftVersion());
         if (!supportedServer) {
             getLogger().severe("Unsupported Minecraft version " + getServer().getMinecraftVersion()
-                    + ": this build supports 26.2 only. Use the 0.4.x releases for 26.1.x;"
-                    + " 1.21.x and older are not supported at all. PacketEvents stays out of the"
-                    + " pipeline and the plugin will disable itself on enable.");
+                    + ": this build supports 1.21.11 only. Use the 0.6.x/0.8.x releases for 26.2,"
+                    + " the 0.4.x releases for 26.1.x; anything else is not supported at all."
+                    + " PacketEvents stays out of the pipeline and the plugin will disable"
+                    + " itself on enable.");
             return;
         }
         // PacketEvents must be set up in onLoad so its packet listeners
@@ -82,9 +83,9 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         if (!supportedServer) {
             getLogger().severe("LitematicaFolia " + getPluginMeta().getVersion()
                     + " does not support Minecraft " + getServer().getMinecraftVersion()
-                    + ". Supported: 26.2 (this build). For 26.1.x use the 0.4.x releases;"
-                    + " 1.21.x and older are unsupported. Disabling to avoid breaking client"
-                    + " connections.");
+                    + ". Supported: 1.21.11 (this build). For 26.2 use the 0.6.x/0.8.x releases;"
+                    + " for 26.1.x use the 0.4.x releases; anything else is unsupported."
+                    + " Disabling to avoid breaking client connections.");
             getServer().getPluginManager().disablePlugin(this);
             return;
         }

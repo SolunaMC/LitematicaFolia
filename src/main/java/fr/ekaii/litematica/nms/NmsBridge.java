@@ -177,6 +177,7 @@ public interface NmsBridge {
      * fallbacks so a mismatched deploy degrades loudly instead of silently.
      */
     String[] BRIDGE_CANDIDATES = {
+            "fr.ekaii.litematica.nms.NmsBridge_1_21_11",
             "fr.ekaii.litematica.nms.NmsBridge26_2",
             "fr.ekaii.litematica.nms.NmsBridge26_1_2",
     };

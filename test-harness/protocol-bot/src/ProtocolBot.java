@@ -45,7 +45,7 @@ import java.util.UUID;
 public final class ProtocolBot {
 
     // ----- MC protocol version for 26.1.2 (extracted from version.json) -----
-    private static final int PROTOCOL_VERSION = 776; // MC 26.2 (was 775 = 26.1.2)
+    private static final int PROTOCOL_VERSION = 774; // MC 1.21.11 (26.2 = 776, 26.1.2 = 775)
 
     // ----- Login Server→Client -----
     private static final int LOGIN_S2C_DISCONNECT = 0;
@@ -88,17 +88,17 @@ public final class ProtocolBot {
     // ----- Play Server→Client -----
     private static final int PLAY_S2C_CUSTOM_PAYLOAD = 24;
     private static final int PLAY_S2C_DISCONNECT = 32;
-    private static final int PLAY_S2C_KEEP_ALIVE = 44;
-    private static final int PLAY_S2C_LOGIN = 49;
-    private static final int PLAY_S2C_PING = 61;
-    private static final int PLAY_S2C_PLAYER_POSITION = 72;
-    private static final int PLAY_S2C_RESPAWN = 82;
-    private static final int PLAY_S2C_START_CONFIGURATION = 118;
+    private static final int PLAY_S2C_KEEP_ALIVE = 43;
+    private static final int PLAY_S2C_LOGIN = 48;
+    private static final int PLAY_S2C_PING = 59;
+    private static final int PLAY_S2C_PLAYER_POSITION = 70;
+    private static final int PLAY_S2C_RESPAWN = 80;
+    private static final int PLAY_S2C_START_CONFIGURATION = 116;
 
     // ----- Play Client→Server -----
-    private static final int PLAY_C2S_CUSTOM_PAYLOAD = 22;
-    private static final int PLAY_C2S_KEEP_ALIVE = 28;
-    private static final int PLAY_C2S_CONFIGURATION_ACK = 17;
+    private static final int PLAY_C2S_CUSTOM_PAYLOAD = 21;
+    private static final int PLAY_C2S_KEEP_ALIVE = 27;
+    private static final int PLAY_C2S_CONFIGURATION_ACK = 15;
     private static final int PLAY_C2S_ACCEPT_TELEPORTATION = 0;
 
     // ----- Servux protocol IDs (from ProtocolConstants.Litematics) -----

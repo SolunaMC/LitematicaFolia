@@ -268,11 +268,23 @@ public final class ProtocolConstants {
      * mismatch it disables its entityDataSync config entirely, killing
      * Direct Paste client-side. We therefore emit the upstream-shaped
      * prefix followed by our own identification. {@code mcVersion} must
-     * be the server's Minecraft version ("26.2", "26.2.1", ...), which
-     * matches the client's for a directly-connected client.
+     * be the server's Minecraft version ("1.21.11", ...), which
+     * matches the client's {@code Reference.MC_VERSION}
+     * ({@code SharedConstants.getCurrentVersion().id()}) for a
+     * directly-connected client.
+     *
+     * <p>1.21.11 note: the current Litematica for MC 1.21.11
+     * (1.21.11-0.26.13, 2026-08) ALSO speaks wire v2 — its
+     * {@code ServuxLitematicaPacket.PROTOCOL_VERSION} is 2 and its task
+     * packets use the gzip Data Tag codec (backported from the 26.1/26.2
+     * line in Servux 1.21.11-0.9.6 "Sync with 26.1"). Its
+     * {@code receiveServuxMetadata} does the same
+     * {@code startsWith("servux-fabric-" + MC_VERSION)} check, so this
+     * string works unchanged; the trailing Servux version we mimic is the
+     * 1.21.11 line's (0.9.6).
      */
     public static String servuxCompatString(String mcVersion) {
-        return "servux-fabric-" + mcVersion + "-0.11.3+" + SERVER_NAME.replace(' ', '-');
+        return "servux-fabric-" + mcVersion + "-0.9.6+" + SERVER_NAME.replace(' ', '-');
     }
 
     /**
@@ -282,5 +294,5 @@ public final class ProtocolConstants {
     public static final int STRUCTURES_PROTOCOL_VERSION = 2;
 
     /** Our server identification string emitted as the {@code servux} key (v1 clients). */
-    public static final String SERVER_NAME       = "LitematicaFolia 0.7.0";
+    public static final String SERVER_NAME       = "LitematicaFolia 0.9.0";
 }

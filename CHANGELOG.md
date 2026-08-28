@@ -2,6 +2,48 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.9.0+1.21.11 - 2026-08-28
+
+### Added - Minecraft 1.21.11 backport (protocol 774)
+
+Backward NMS port of the full 0.8.0 placement-fidelity pipeline to
+Minecraft 1.21.11 (Paper/Folia). The paste pipeline itself is
+NMS-agnostic; this release swaps the platform layer:
+
+- **Build**: paperweight dev bundle `1.21.11-R0.1-SNAPSHOT`,
+  `api-version: "1.21"`, version `0.9.0+1.21.11`.
+- **NMS bridge**: new `NmsBridge_1_21_11` (replacing `NmsBridge26_2` in
+  this build), registered first in `NmsBridge.BRIDGE_CANDIDATES`.
+  1.21.11 exposes the same mapped surface the 26.2 bridge used
+  (`TagValueInput.create(ProblemReporter, HolderLookup.Provider,
+  CompoundTag)`, `EntityType.loadEntityRecursive(ValueInput, Level,
+  EntitySpawnReason, EntityProcessor)`, `BlockEntity.loadWithComponents(
+  ValueInput)` / `saveWithFullMetadata(HolderLookup.Provider)`,
+  `Entity.save(ValueOutput)`, `BlockState.rotate/mirror`,
+  `Entity.rotate/mirror` float-yaw semantics), verified against the
+  1.21.11 dev-bundle sources. Client entity-yaw convention (yaw MINUS 90
+  on CW90; FRONT_BACK = -yaw, LEFT_RIGHT = 180-yaw) is unchanged.
+- **PacketEvents**: 2.13.0 -> 2.11.2, whose `ServerVersion` enum knows
+  1.21.9/1.21.10/1.21.11. Still only initialized when
+  `protocol.enableEasyPlace` is true (issue #3/#5 posture: the 0.4.x
+  jars' embedded PE 2.7.0 killed every 1.21.11 join with
+  "IllegalStateException: void future").
+- **Version gate**: this build enables ONLY on Minecraft 1.21.11 and
+  self-disables (SEVERE) anywhere else; 26.2 users stay on 0.6.x/0.8.x,
+  26.1.x users on 0.4.x.
+- **Servux wire**: unchanged dual v1/v2. The current Litematica for MC
+  1.21.11 (`1.21.11-0.26.13`, with Servux `1.21.11-0.9.6` "Sync with
+  26.1") speaks wire v2 (`ServuxLitematicaPacket.PROTOCOL_VERSION = 2`,
+  gzip Data Tag task packets) and validates
+  `servux.startsWith("servux-fabric-1.21.11")`; the metadata reply now
+  mimics the 1.21.11 Servux line (`servux-fabric-<mc>-0.9.6+...`).
+  Older 1.21.11 clients negotiate v1 as before.
+- **Test harness**: `ProtocolBot` re-pinned to protocol 774 with the
+  play-phase packet IDs re-derived from the vanilla 1.21.11 data
+  generator (`--reports` packets.json): S2C keep_alive 43, login 48,
+  ping 59, player_position 70, respawn 80, start_configuration 116;
+  C2S custom_payload 21, keep_alive 27, configuration_acknowledged 15.
+
 ## 0.8.0+26.2 - 2026-08-27
 
 ### Fixed - Servux Direct Paste placement fidelity (issue #4)

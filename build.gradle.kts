@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.8.0+26.2"
+version = "0.9.0+1.21.11"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
@@ -35,7 +35,7 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("26.2.build.111-stable")
+    paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
     compileOnly(libs.luckperms)
     // Optional runtime hook. CoreProtect is supplied by the server and is
     // never bundled into the plugin jar.
@@ -87,7 +87,7 @@ tasks {
             "name" to project.name,
             "version" to project.version,
             "description" to project.description,
-            "apiVersion" to "26.2"
+            "apiVersion" to "1.21"
         )
         inputs.properties(props)
         filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {
