@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.6.0+26.2"
+version = "0.6.0+26.3-pre2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
@@ -14,6 +14,7 @@ java {
 }
 
 repositories {
+    mavenLocal()
     maven("https://maven.playpro.com") {
         content { includeGroup("net.coreprotect") }
     }
@@ -35,7 +36,7 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("26.2.build.111-stable")
+    paperweight.paperDevBundle("26.3-pre-2.local-SNAPSHOT")
     compileOnly(libs.luckperms)
     // Optional runtime hook. CoreProtect is supplied by the server and is
     // never bundled into the plugin jar.
