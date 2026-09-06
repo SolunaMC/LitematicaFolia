@@ -177,7 +177,7 @@ paste:
 
 protocol:
   enableServuxBridge: false          # OFF by default; flip to true to enable Direct Paste
-  enableEasyPlace: false             # Easy Place V3 server-side (PacketEvents)
+  enableEasyPlace: false             # Easy Place V3 server-side (Netty handler, no PacketEvents)
   maxDirectPasteSize: 134217728      # 128 MiB; raise if you stream 32M+ block schematics
 
 logging:
@@ -195,7 +195,7 @@ logging:
 
 - **`/litematica save` is blocks-only for now.** Saved regions are origin-normalized since 0.5.0 (re-pasting a saved file lands exactly at the coordinates you give it), and the paste/save coordinate contract is guarded by a round-trip smoke test, but TileEntity / Entity / PendingTick capture on save is still on the roadmap. Workaround: use Litematica's Save Area on the client.
 - **Direct Paste size cap = client-side limited.** Litematica's `sliceForServux` threshold is 64 MiB NBT; above that it uses a multi-frame Transmit protocol (our handler supports it, untested at scale).
-- **Easy Place V3 is gated off by default.** The bundled PacketEvents is now 2.13.0 (parses 26.2-era server version strings), but the server-side block-state override path has not been exercised at scale. Code is there; `protocol.enableEasyPlace: true` at your own risk.
+- **Easy Place V3 is gated off by default.** Since 0.8.1 it runs on a direct Netty handler over the server's own packet classes (PacketEvents is gone, issue #5) and applies the full V3 property set (facing, half, axis, slab type, stairs shape, hinge, rail shape, rotation, comparator mode, repeater delay, ...). It has been verified by unit tests and code review against the Servux 26.2 / Litematica 26.2-0.28.x wire, not yet by a real client: `protocol.enableEasyPlace: true` is a canary switch. Beds keep their vanilla orientation.
 - **FAWE ClipboardFormat adapter is stubbed.** The FAWE Maven repository (`mvn.intellectualsites.com`) has been unreachable across releases; the adapter will return when the upstream repo is.
 
 ## How does it compare?
@@ -223,7 +223,7 @@ fr.ekaii.litematica/
 ├── command/         ← Brigadier command tree
 ├── protocol/        ← Servux-compatible plugin-message bridge
 │   ├── handler/     ← Metadata, Direct Paste, BulkRequest, Structure bbox
-│   └── easyplace/   ← PacketEvents listener for Easy Place V3
+│   └── easyplace/   ← Netty handler + state resolver for Easy Place V3
 └── compat/          ← FAWE adapter (future)
 ```
 

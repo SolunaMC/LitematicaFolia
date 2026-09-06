@@ -1,7 +1,6 @@
 [versions]
 luckperms = "5.4"
 fawe = "2.14.0-SNAPSHOT"
-packetevents = "2.13.0"
 
 # Plugins
 paperweight-userdev = "2.0.0-SNAPSHOT"
@@ -12,7 +11,6 @@ shadow = "9.3.0"
 luckperms = { group = "net.luckperms", name = "api", version.ref = "luckperms" }
 fawe-bukkit = { group = "com.fastasyncworldedit", name = "FastAsyncWorldEdit-Bukkit", version.ref = "fawe" }
 fawe-core = { group = "com.fastasyncworldedit", name = "FastAsyncWorldEdit-Core", version.ref = "fawe" }
-packetevents-spigot = { group = "com.github.retrooper", name = "packetevents-spigot", version.ref = "packetevents" }
 
 [plugins]
 paperweight-userdev = { id = "io.papermc.paperweight.userdev", version.ref = "paperweight-userdev" }

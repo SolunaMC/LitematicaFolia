@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.8.0+26.2"
+version = "0.8.1+26.2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
@@ -28,9 +28,6 @@ repositories {
     // maven("https://mvn.intellectualsites.com/content/repositories/releases/") {
     //     content { includeGroup("com.fastasyncworldedit") }
     // }
-    maven("https://repo.codemc.io/repository/maven-releases/") {
-        content { includeGroup("com.github.retrooper") }
-    }
     mavenCentral()
 }
 
@@ -40,11 +37,8 @@ dependencies {
     // Optional runtime hook. CoreProtect is supplied by the server and is
     // never bundled into the plugin jar.
     compileOnly("net.coreprotect:coreprotect:24.0")
-    // PacketEvents — required by EasyPlaceListener (P13). Shaded into the
-    // final fat jar so end users don't need to install PacketEvents as a
-    // separate plugin. PacketEvents 2.6+ supports Folia per upstream
-    // changelog.
-    implementation(libs.packetevents.spigot)
+    // Easy Place V3 is a direct Netty handler on the server's own packet
+    // classes (dev bundle): no PacketEvents, nothing shaded (issue #5).
     // FAWE compileOnly deps disabled — see repository block above.
     // compileOnly(libs.fawe.bukkit)
     // compileOnly(libs.fawe.core)
@@ -55,24 +49,8 @@ tasks {
         dependsOn(shadowJar)
     }
     shadowJar {
-        // Relocate PacketEvents to avoid classpath clashes if another
-        // plugin on the server also bundles a different PacketEvents
-        // version. Keep adventure / kyori untouched — they're already
-        // provided by Paper and PacketEvents transitively pulls them as
-        // `compile` scope.
-        relocate("com.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents")
-        relocate("io.github.retrooper.packetevents", "fr.ekaii.litematica.shaded.packetevents.spigot")
-        // Strip transitive adventure / kyori from the shaded jar — Paper
-        // already provides them. EXCEPT adventure-nbt (+ the examination-*
-        // artifacts its types implement): PacketEvents 2.13 needs them and
-        // Paper does not expose them to plugins (NoClassDefFoundError:
-        // net/kyori/adventure/nbt/BinaryTag, net/kyori/examination/Examinable).
-        val shadedKyori = setOf("adventure-nbt", "examination-api", "examination-string")
-        dependencies {
-            exclude { dep ->
-                dep.moduleGroup == "net.kyori" && dep.moduleName !in shadedKyori
-            }
-        }
+        // No runtime dependencies are bundled any more; the -all jar is kept
+        // as the release artifact name the CI, docs and servers expect.
     }
     compileJava {
         options.encoding = Charsets.UTF_8.name()

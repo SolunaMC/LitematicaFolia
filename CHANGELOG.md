@@ -2,6 +2,66 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.8.1+26.2 - 2026-10-07
+
+Port of the Easy Place rework from the `0.8.1+26.3-pre2` canary back to the
+26.2 line (dev bundle `26.2.build.111-stable`, server version gate
+unchanged: 26.2 only).
+
+### Changed - Easy Place V3 without PacketEvents (issue #5)
+
+- **PacketEvents is gone**, dependency and shading included. Easy Place
+  was its only consumer, it kept the -all jar at 9.5 MB (now about
+  220 KB), and every new Minecraft version had to wait for a PacketEvents
+  release with matching mappings (none exists for 26.3).
+  Easy Place V3 is now a per-connection Netty
+  `ChannelInboundHandlerAdapter` (`litematica_easyplace`, inserted before
+  `packet_handler`) that works on the server's own
+  `ServerboundUseItemOnPacket` record: it decodes the protocol value from
+  the relative cursor X (`(int)(hit.x - pos.x) - 2`, negative = vanilla
+  click), memoises it per (player, clicked block), and forwards a rewritten
+  packet whose cursor X carries only the original raycast fraction so
+  vanilla's cursor-in-block range check accepts the click. Injected on
+  `PlayerJoinEvent` (and for players already online when enabled),
+  removed on quit and on plugin disable. When
+  `protocol.enableEasyPlace` is false nothing touches the pipeline.
+- **Full V3 property set.** The previous implementation applied only a
+  facing via Bukkit's `Directional`. The new `EasyPlaceStateResolver`
+  reproduces the Servux 26.2 decode on NMS: first direction property
+  (except `vertical_direction`, value 6 = opposite, invalid facing falls
+  back to the player's opposite facing), then, for the block's properties
+  sorted by name, every whitelisted property (`inverted`, `open`,
+  `attachment`, `axis`, `half`, `face`, chest `type`, comparator `mode`,
+  `hinge`, `facing` (all three variants), `orientation`, rail `shape`
+  (both), slab `type`, stairs `shape`, copper golem `pose`, `bites`,
+  `delay`, `note`, `rotation`) consuming
+  `log2(smallestEncompassingPowerOfTwo(count))` bits; a decoded double
+  slab is never applied; `waterlogged` / `powered` are reset and
+  `waterlogged` restored when the vanilla placement was in water. Each
+  step is validated with `canSurvive` and rolled back when it fails.
+- **Single block update for most blocks.** The correction is written
+  inside `BlockPlaceEvent` at HIGHEST priority (after protection plugins)
+  without physics; CraftBukkit's post-event step then runs the one
+  `onPlace` / neighbour / client update on the corrected state, and a
+  cancelled event reverts everything. Blocks with a block entity (chests,
+  hoppers, comparators, signs, ...) are corrected on the next tick of the
+  owning region instead, because CraftBukkit is still staging their block
+  entity during the event. Two-block-tall blocks (doors, small dripleaf)
+  get the corrected properties copied to their other half.
+- **Permission semantics.** `litematica.easyplace.use` (default op) gates
+  the state override only; the cursor rewrite is unconditional, so a
+  player without the permission gets a plain vanilla placement instead of
+  a silently dropped click.
+- **Behaviour differences vs Servux, intentional:** Servux corrects the
+  state before placement (mixin in `BlockItem#getPlacementState`), this
+  plugin corrects the vanilla-placed state; placement-time side effects
+  that depend on the final state are therefore vanilla's (double-chest
+  merging decided by the player's facing, bed head position). Beds are
+  left untouched. When the final state cannot survive at the position the
+  vanilla placement stands instead of failing the placement.
+- Tests: decoder double path, raycast-fraction recovery, per-property bit
+  widths against the upstream formula, and a stairs bit-walk round trip.
+
 ## 0.8.0+26.2 - 2026-08-27
 
 ### Fixed - Servux Direct Paste placement fidelity (issue #4)
