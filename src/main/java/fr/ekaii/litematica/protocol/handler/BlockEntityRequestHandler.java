@@ -3,9 +3,11 @@ package fr.ekaii.litematica.protocol.handler;
 import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.nms.NmsBridge;
 import fr.ekaii.litematica.paste.FoliaCompat;
+import fr.ekaii.litematica.protocol.DataTagCodec;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
+import fr.ekaii.litematica.protocol.ProtocolSessions;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
@@ -61,14 +63,17 @@ public final class BlockEntityRequestHandler {
     private final Plugin plugin;
     private final NmsBridge nms;
     private final RateLimiter limiter;
+    private final ProtocolSessions sessions;
 
-    public BlockEntityRequestHandler(Plugin plugin, NmsBridge nms) {
-        this(plugin, nms, new RateLimiter(DEFAULT_CAPACITY, DEFAULT_REFILL));
+    public BlockEntityRequestHandler(Plugin plugin, NmsBridge nms, ProtocolSessions sessions) {
+        this(plugin, nms, sessions, new RateLimiter(DEFAULT_CAPACITY, DEFAULT_REFILL));
     }
 
-    public BlockEntityRequestHandler(Plugin plugin, NmsBridge nms, RateLimiter limiter) {
+    public BlockEntityRequestHandler(Plugin plugin, NmsBridge nms, ProtocolSessions sessions,
+                                     RateLimiter limiter) {
         this.plugin = plugin;
         this.nms = nms;
+        this.sessions = sessions;
         this.limiter = limiter;
     }
 
@@ -77,8 +82,13 @@ public final class BlockEntityRequestHandler {
     }
 
     public void onRequest(Player player, ProtocolBuffer.Reader r) throws Exception {
-        // Drain the legacy transactionId VarInt — both sides ignore it.
-        try { r.readVarInt(); } catch (Throwable ignored) {}
+        // Wire v1 prefixes a legacy transactionId VarInt (always -1, five
+        // bytes) before the packed BlockPos; wire v2 (0.28.5+) dropped it.
+        // The body length disambiguates unambiguously: 8 bytes = v2 (pos
+        // only), anything longer starts with the VarInt to drain.
+        if (r.remaining() > 8) {
+            try { r.readVarInt(); } catch (Throwable ignored) {}
+        }
 
         int[] pos;
         try {
@@ -125,12 +135,18 @@ public final class BlockEntityRequestHandler {
     }
 
     private void sendReply(Player player, int x, int y, int z, LitematicNbt.NbtCompound nbt) throws Exception {
-        LitematicNbt.NbtCompound body = nbt; // may be null → writeNbt emits TAG_END
+        LitematicNbt.NbtCompound body = nbt; // may be null → empty NBT / empty Data Tag
+        final boolean v2 = sessions.isV2(player.getUniqueId());
         byte[] reply = PacketHandler.buildLitematics(
                 ProtocolConstants.Litematics.S2C_BLOCK_NBT_REPLY,
                 w -> {
                     w.writeBlockPos(x, y, z);
-                    w.writeNbt(body);
+                    if (v2) {
+                        // Wire v2 replies carry a Data Tag blob.
+                        w.writeRawBytes(DataTagCodec.encode(body));
+                    } else {
+                        w.writeNbt(body);
+                    }
                 });
         player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, reply);
     }

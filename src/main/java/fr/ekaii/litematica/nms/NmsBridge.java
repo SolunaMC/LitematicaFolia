@@ -52,6 +52,49 @@ public interface NmsBridge {
     Entity spawnEntityFromNbt(Location loc, LitematicNbt.NbtTag nbt);
 
     /**
+     * Spawn an entity at {@code loc} loaded from {@code nbt}, applying the
+     * placement orientation transform to the entity itself (yaw, and the
+     * facing of hanging entities such as item frames / paintings, via NMS
+     * {@code Entity#mirror} / {@code Entity#rotate}). The yaw convention is
+     * the Litematica CLIENT's {@code rotateEntity} formula (yaw MINUS 90 on
+     * a clockwise quarter turn, sub mirror replacing the main mirror's yaw),
+     * matching the client's placement preview, NOT vanilla StructureTemplate
+     * semantics. See {@code PlacementTransform#transformYaw} (issue #4.4).
+     *
+     * <p>Ordinals follow the vanilla enums: rotation
+     * {@code NONE, CLOCKWISE_90, CLOCKWISE_180, COUNTERCLOCKWISE_90};
+     * mirror {@code NONE, LEFT_RIGHT, FRONT_BACK}. Mirrors apply first
+     * (main, then sub), then the combined rotation, in upstream Litematica
+     * {@code rotateEntity} order. {@code mirrorSubOrdinal} carries the
+     * axis-SWAPPED sub mirror ({@code PlacementTransform#effectiveSubMirror}),
+     * like the upstream call site.
+     *
+     * <p>The default implementation ignores the transform and delegates to
+     * {@link #spawnEntityFromNbt(Location, LitematicNbt.NbtTag)} so no-op /
+     * legacy bridges stay source-compatible.
+     */
+    default Entity spawnEntityFromNbt(Location loc, LitematicNbt.NbtTag nbt,
+                                      int rotationOrdinal, int mirrorMainOrdinal, int mirrorSubOrdinal) {
+        return spawnEntityFromNbt(loc, nbt);
+    }
+
+    /**
+     * Transform a Bukkit {@link org.bukkit.block.data.BlockData} through the
+     * placement mirror/rotation (NMS {@code BlockState#mirror} /
+     * {@code BlockState#rotate}), so directional blocks (stairs, rails,
+     * logs, torches…) face the right way in a rotated or mirrored paste.
+     * Same ordinal conventions and application order as
+     * {@link #spawnEntityFromNbt(Location, LitematicNbt.NbtTag, int, int, int)}.
+     *
+     * <p>The default implementation returns the input unchanged.
+     */
+    default org.bukkit.block.data.BlockData transformBlockData(
+            org.bukkit.block.data.BlockData data,
+            int mirrorMainOrdinal, int mirrorSubOrdinal, int rotationOrdinal) {
+        return data;
+    }
+
+    /**
      * Re-schedule a pending block tick at {@code (x, y, z)}.
      * The {@code nbt} encodes the original tick: target block id, delay,
      * priority. Implementations must convert delay to absolute world time.

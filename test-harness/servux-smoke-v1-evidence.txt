@@ -1,0 +1,88 @@
+PASS
+
+Servux Direct-Paste verified end-to-end (wire v1):
+  - bot completed handshake -> login -> config -> play
+  - servux:litematics metadata exchange: 1
+  - v2 task-complete sync: 0
+  - server logged 1 "paste complete:" line(s)
+  - newest region-file mtime: 1787687702
+  - block probe at expected stone location: 0 (returned: Could not set the block)
+
+Server last 30 lines:
+[21:54:34] [User Authenticator #0/INFO]: UUID of player ProtoBot is 4b29dcd8-c747-3975-9ced-9cc32fe38557
+[21:54:35] [Server thread/INFO]: [LitematicaFolia] [diag-net] ProtoBot joined; channels @ join = 
+[21:54:35] [Server thread/INFO]: ProtoBot joined the game
+[21:54:35] [Server thread/INFO]: ProtoBot[/127.0.0.1:63028] logged in with entity id 1 at ([minecraft:overworld]-2.5, 102.0, 1.5)
+[21:54:35] [Server thread/INFO]: [LitematicaFolia] [diag-net] +register ProtoBot channel=servux:litematics
+[21:54:35] [Server thread/INFO]: [LitematicaFolia] [diag-net] +register ProtoBot channel=servux:structures
+[21:54:35] [Server thread/INFO]: [LitematicaFolia] [diag-net] +register ProtoBot channel=litematicafolia:easy_place
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/PacketHandler] [diag-net] RX servux:litematics type=2 len=2 from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/MetadataHandler] [diag-net] metadata request from ProtoBot -> negotiated wire v1 (no version tag)
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/PacketHandler] [diag-net] RX servux:litematics type=13 len=245 from ProtoBot (slice #1)
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] splitter reassembled 242 bytes from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] payload decoded (wire v1, task=Litematic-TransmitStart) from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] splitter reassembled 417 bytes from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] payload decoded (wire v1, task=Litematic-TransmitData) from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] splitter reassembled 68 bytes from ProtoBot
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/DirectPasteHandler] [direct-paste] payload decoded (wire v1, task=Litematic-TransmitEnd) from ProtoBot
+[21:54:35] [Folia Async Scheduler Thread #0/INFO]: [LitematicaFolia/PasteOperation] paste region 'main': offset (0,64,0) yaw=0 -> world start (100,128,100), size 4x4x4
+[21:54:35] [Server thread/INFO]: [LitematicaFolia/PasteOperation] paste complete: 64 blocks, 0 TE, 0 entities, 0 err in 182ms
+[21:54:38] [Folia Async Scheduler Thread #1/INFO]: [LitematicaFolia/MetadataHandler] [diag-net] TX servux:litematics S2C_METADATA (v1 shape) pushed to ProtoBot
+[21:54:40] [Folia Async Scheduler Thread #2/INFO]: [LitematicaFolia] [diag-net] ProtoBot channels @ +5s = servux:litematics, servux:structures, litematicafolia:easy_place
+[21:54:50] [Server thread/INFO]: ProtoBot lost connection: Disconnected
+[21:54:50] [Server thread/INFO]: ProtoBot left the game
+[21:55:00] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[21:55:00] [RCON Client /127.0.0.1 #3/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[21:55:02] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[21:55:02] [RCON Client /127.0.0.1 #4/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[21:55:03] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[21:55:03] [RCON Client /127.0.0.1 #5/INFO]: Thread RCON Client /127.0.0.1 shutting down
+[21:55:04] [RCON Listener #1/INFO]: Thread RCON Client /127.0.0.1 started
+[21:55:04] [RCON Client /127.0.0.1 #6/INFO]: Thread RCON Client /127.0.0.1 shutting down
+
+Bot last 40 lines:
+[bot] [play] received Login(Play)
+[bot] [play] sent Brand custom payload
+[bot] [play] sent minecraft:register for servux channels
+[bot] [servux] sent C2S_METADATA_REQUEST (wire v1)
+[bot] [servux] read 342 bytes from /private/tmp/claude-501/-Users-paulchauvat/774c7123-3b7e-4ee3-966e-4d62f0749763/scratchpad/lmf-work/litematica-folia-ekaii/schematics-fixtures/stone-cube-4.litematic
+[bot] [servux]   outer-splitter frame -> 1 slice(s), 242 body bytes
+[bot] [servux] sent TransmitStart sliceKey=-991645726646003494 totalSize=342
+[bot] [servux]   outer-splitter frame -> 1 slice(s), 417 body bytes
+[bot] [servux] sent TransmitData (342 bytes)
+[bot] [servux]   outer-splitter frame -> 1 slice(s), 68 body bytes
+[bot] [servux] sent TransmitEnd
+[bot] [servux] streamed C2S_NBT_STREAM_START + DATA frames
+[bot] [play] pumping packets for 15s to drain replies + paste
+[bot] [play] CustomPayload channel=minecraft:register bytes=36
+[bot] [play] PlayerPosition → ack teleport=1
+[bot] [play] CustomPayload channel=servux:litematics bytes=96
+[bot] [servux] inbound packet type=1
+[bot] [servux] metadata NBT keys: [name, id, version, servux]
+[bot] [servux] name=litematic_data id=servux:litematics version=1 servux=LitematicaFolia 0.7.0
+[bot] [servux] METADATA OK — bridge active
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] CustomPayload channel=servux:litematics bytes=96
+[bot] [servux] inbound packet type=1
+[bot] [servux] metadata NBT keys: [name, id, version, servux]
+[bot] [servux] name=litematic_data id=servux:litematics version=1 servux=LitematicaFolia 0.7.0
+[bot] [servux] METADATA OK — bridge active
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] [play] keepalive ping → pong
+[bot] DONE
+
+harness  : /private/tmp/claude-501/-Users-paulchauvat/774c7123-3b7e-4ee3-966e-4d62f0749763/scratchpad/lmf-work/litematica-folia-ekaii/test-harness
+server log: /private/tmp/claude-501/-Users-paulchauvat/774c7123-3b7e-4ee3-966e-4d62f0749763/scratchpad/lmf-work/litematica-folia-ekaii/test-harness/server/logs/latest.log
+bot log  : /private/tmp/claude-501/-Users-paulchauvat/774c7123-3b7e-4ee3-966e-4d62f0749763/scratchpad/lmf-work/litematica-folia-ekaii/test-harness/servux-bot.log
+run log  : /private/tmp/claude-501/-Users-paulchauvat/774c7123-3b7e-4ee3-966e-4d62f0749763/scratchpad/lmf-work/litematica-folia-ekaii/test-harness/servux-run.log

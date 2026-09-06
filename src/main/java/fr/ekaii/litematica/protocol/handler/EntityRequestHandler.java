@@ -3,9 +3,11 @@ package fr.ekaii.litematica.protocol.handler;
 import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.nms.NmsBridge;
 import fr.ekaii.litematica.paste.FoliaCompat;
+import fr.ekaii.litematica.protocol.DataTagCodec;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
+import fr.ekaii.litematica.protocol.ProtocolSessions;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -55,14 +57,17 @@ public final class EntityRequestHandler {
     private final Plugin plugin;
     private final NmsBridge nms;
     private final RateLimiter limiter;
+    private final ProtocolSessions sessions;
 
-    public EntityRequestHandler(Plugin plugin, NmsBridge nms) {
-        this(plugin, nms, new RateLimiter(DEFAULT_CAPACITY, DEFAULT_REFILL));
+    public EntityRequestHandler(Plugin plugin, NmsBridge nms, ProtocolSessions sessions) {
+        this(plugin, nms, sessions, new RateLimiter(DEFAULT_CAPACITY, DEFAULT_REFILL));
     }
 
-    public EntityRequestHandler(Plugin plugin, NmsBridge nms, RateLimiter limiter) {
+    public EntityRequestHandler(Plugin plugin, NmsBridge nms, ProtocolSessions sessions,
+                                RateLimiter limiter) {
         this.plugin = plugin;
         this.nms = nms;
+        this.sessions = sessions;
         this.limiter = limiter;
     }
 
@@ -71,11 +76,13 @@ public final class EntityRequestHandler {
     }
 
     public void onRequest(Player player, ProtocolBuffer.Reader r) throws Exception {
-        try { r.readVarInt(); } catch (Throwable ignored) {}
-
-        int entityId;
+        // Wire v1: VarInt(transactionId = always -1) + VarInt(entityId).
+        // Wire v2 (0.28.5+): VarInt(entityId) only. Entity ids are never
+        // negative, so a leading -1 marks the legacy prefix to drain.
+        final int entityId;
         try {
-            entityId = r.readVarInt();
+            int first = r.readVarInt();
+            entityId = (first == -1) ? r.readVarInt() : first;
         } catch (Throwable t) {
             LOG.warning("entity request: bad entityId from " + player.getName());
             return;
@@ -136,11 +143,17 @@ public final class EntityRequestHandler {
 
     private void sendReply(Player player, int entityId, LitematicNbt.NbtCompound nbt) throws Exception {
         LitematicNbt.NbtCompound body = nbt;
+        final boolean v2 = sessions.isV2(player.getUniqueId());
         byte[] reply = PacketHandler.buildLitematics(
                 ProtocolConstants.Litematics.S2C_ENTITY_NBT_REPLY,
                 w -> {
                     w.writeVarInt(entityId);
-                    w.writeNbt(body);
+                    if (v2) {
+                        // Wire v2 replies carry a Data Tag blob.
+                        w.writeRawBytes(DataTagCodec.encode(body));
+                    } else {
+                        w.writeNbt(body);
+                    }
                 });
         player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, reply);
     }

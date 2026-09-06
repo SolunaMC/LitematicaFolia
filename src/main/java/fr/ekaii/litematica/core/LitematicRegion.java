@@ -45,6 +45,21 @@ public final class LitematicRegion {
     public LitematicRegion() {
     }
 
+    /**
+     * X of the raw on-disk {@code Position} corner (pos1), undoing the
+     * negative-size normalisation. Entity {@code Pos} values in the litematic
+     * format are relative to THIS corner, not the normalised min corner
+     * (Litematica saves them as {@code entityPos - box.getPos1()}), while
+     * blocks / tile entities / pending ticks are min-corner relative.
+     */
+    public int pos1X() { return signX < 0 ? originX + sizeX - 1 : originX; }
+
+    /** Y of the raw on-disk {@code Position} corner. See {@link #pos1X()}. */
+    public int pos1Y() { return signY < 0 ? originY + sizeY - 1 : originY; }
+
+    /** Z of the raw on-disk {@code Position} corner. See {@link #pos1X()}. */
+    public int pos1Z() { return signZ < 0 ? originZ + sizeZ - 1 : originZ; }
+
     /** Total number of cells in this region. */
     public long volume() {
         return (long) sizeX * sizeY * sizeZ;

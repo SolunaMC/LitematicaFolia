@@ -276,7 +276,11 @@ public final class LitematicaCommands {
                 /* deferredPhysics */   !noPhysics && plugin.getConfig().getBoolean("paste.deferredPhysics", base.deferredPhysics()),
                 /* observersLast */     plugin.getConfig().getBoolean("paste.observersLast", base.observersLast()),
                 /* maxBlocksPerChunkTask */ plugin.getConfig().getInt("paste.maxBlocksPerChunkTask", base.maxBlocksPerChunkTask()),
-                /* yawRotation */ yaw,
+                /* rotation */ fr.ekaii.litematica.paste.PlacementTransform.Rot.fromDegrees(yaw),
+                /* mirror */ fr.ekaii.litematica.paste.PlacementTransform.Mir.NONE,
+                /* replaceBehavior */ base.replaceBehavior(),
+                /* layerFilter */ null,
+                /* subRegions */ java.util.Map.of(),
                 /* progress */ null
         );
 
@@ -460,12 +464,26 @@ public final class LitematicaCommands {
         paletteIndex.put("minecraft:air", 0);
         paletteList.add(new BlockStateEntry("minecraft:air"));
 
-        // Save-v2: thread-safe lists for TE / pending-tick NBT captured per-chunk.
-        // Entities are captured separately after all chunk reads (single
-        // world.getNearbyEntities call from a global-region context).
+        // Save-v2: thread-safe lists for TE / pending-tick NBT captured
+        // per-chunk. Entities are captured per-chunk too (see below).
         final List<LitematicNbt.NbtTag> tileEntities = new java.util.concurrent.CopyOnWriteArrayList<>();
         final List<LitematicNbt.NbtTag> pendingBlockTicks = new java.util.concurrent.CopyOnWriteArrayList<>();
         final List<LitematicNbt.NbtTag> pendingFluidTicks = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Entity NBT captured PER CHUNK from the chunk's owning region task.
+        // A single world.getNearbyEntities() call from the global region
+        // scheduler throws "Cannot getEntities asynchronously" on Folia (the
+        // global thread owns no region), which silently dropped every entity
+        // from saves. Per-chunk getNearbyEntities on the owning region thread
+        // is the Folia-safe way; duplicates across chunk tasks are prevented
+        // by capturedEntityIds below.
+        final List<LitematicNbt.NbtTag> entities = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Dedup guard: getNearbyEntities matches by AABB INTERSECTION, not
+        // point containment, so an entity whose hitbox straddles a chunk
+        // border intersects BOTH adjacent chunk-clipped boxes and would be
+        // captured twice. First chunk task to claim the UUID wins (the
+        // captured NBT is identical either way).
+        final java.util.Set<java.util.UUID> capturedEntityIds =
+                java.util.concurrent.ConcurrentHashMap.newKeySet();
 
         // NmsBridge is cached on the plugin so tests + reflective lookup happen once.
         final NmsBridge bridge = NmsBridge.get();
@@ -563,13 +581,55 @@ public final class LitematicaCommands {
                             }
                         }
                     }
+
+                    // Entity capture for this chunk (region-owned, Folia-safe).
+                    // getNearbyEntities is legal HERE because the AABB is
+                    // clipped to this chunk, which this task's region owns;
+                    // only the old single global-thread call was illegal.
+                    // (Chunk#getEntities returns an empty array on Folia for
+                    // freshly force-loaded chunks, so it is no alternative.)
+                    // NOTE: the chunk-clipped boxes are disjoint, but Bukkit
+                    // getNearbyEntities matches an entity when its HITBOX
+                    // intersects the box, so a border-straddling entity shows
+                    // up in more than one chunk task. capturedEntityIds
+                    // dedupes by UUID (upstream saves keep AABB-intersection
+                    // inclusion, one region box per save, so this preserves
+                    // upstream inclusion semantics without duplicates).
+                    try {
+                        org.bukkit.util.BoundingBox chunkBB = new org.bukkit.util.BoundingBox(
+                                Math.max(minX, fcx << 4), minY, Math.max(minZ, fcz << 4),
+                                Math.min(maxX + 1, (fcx << 4) + 16), maxY + 1,
+                                Math.min(maxZ + 1, (fcz << 4) + 16));
+                        for (org.bukkit.entity.Entity e : world.getNearbyEntities(chunkBB)) {
+                            if (e instanceof Player) continue;
+                            if (!capturedEntityIds.add(e.getUniqueId())) continue;
+                            org.bukkit.Location el = e.getLocation();
+                            LitematicNbt.NbtTag eNbt;
+                            try {
+                                eNbt = bridge.extractEntityNbt(e);
+                            } catch (Throwable t) {
+                                eNbt = null;
+                            }
+                            if (eNbt instanceof LitematicNbt.NbtCompound eC) {
+                                // Rewrite Pos to region-local doubles (Litematica convention).
+                                LinkedHashMap<String, LitematicNbt.NbtTag> entries =
+                                        new LinkedHashMap<>(eC.entries());
+                                LitematicNbt.NbtList pos = new LitematicNbt.NbtList(
+                                        LitematicNbt.TAG_DOUBLE, new ArrayList<>());
+                                pos.values().add(new LitematicNbt.NbtDouble(el.getX() - minX));
+                                pos.values().add(new LitematicNbt.NbtDouble(el.getY() - minY));
+                                pos.values().add(new LitematicNbt.NbtDouble(el.getZ() - minZ));
+                                entries.put("Pos", pos);
+                                entities.add(new LitematicNbt.NbtCompound(entries));
+                            }
+                        }
+                    } catch (Throwable t) {
+                        plugin.getLogger().log(Level.WARNING,
+                                "save: entity capture failed for chunk (" + fcx + "," + fcz + ")", t);
+                    }
                 }));
             }
         }
-
-        // Entity extraction list — populated in the post-chunk-read global-region
-        // pass below, then attached to the region NBT in the async writer.
-        final List<LitematicNbt.NbtTag> entities = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         CompletableFuture.allOf(reads.toArray(new CompletableFuture[0])).whenComplete((ignored, throwable) -> {
             if (throwable != null) {
@@ -578,44 +638,11 @@ public final class LitematicaCommands {
                 return;
             }
 
-            // Entity extraction: world.getNearbyEntities() must run on a thread
-            // that can see the world. On Folia this requires a region context
-            // — we use the global scheduler since the bbox may span multiple
-            // regions and each entity will be serialised via its own per-entity
-            // scheduler if it lands in another region. extractEntityNbt itself
-            // is implemented to fail-soft via FoliaThreadException.
-            CompletableFuture<Void> entityPass = FoliaCompat.runGlobal(plugin, () -> {
-                try {
-                    org.bukkit.util.BoundingBox bb = new org.bukkit.util.BoundingBox(
-                            minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
-                    // Center + halfDiag form of getNearbyEntities — uses bbox.
-                    java.util.Collection<org.bukkit.entity.Entity> nearby =
-                            world.getNearbyEntities(bb);
-                    for (org.bukkit.entity.Entity e : nearby) {
-                        if (e instanceof Player) continue;
-                        LitematicNbt.NbtTag eNbt;
-                        try {
-                            eNbt = bridge.extractEntityNbt(e);
-                        } catch (Throwable t) {
-                            eNbt = null;
-                        }
-                        if (eNbt instanceof LitematicNbt.NbtCompound eC) {
-                            // Rewrite Pos to region-local doubles (Litematica convention).
-                            LinkedHashMap<String, LitematicNbt.NbtTag> entries =
-                                    new LinkedHashMap<>(eC.entries());
-                            LitematicNbt.NbtList pos = new LitematicNbt.NbtList(
-                                    LitematicNbt.TAG_DOUBLE, new ArrayList<>());
-                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getX() - minX));
-                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getY() - minY));
-                            pos.values().add(new LitematicNbt.NbtDouble(e.getLocation().getZ() - minZ));
-                            entries.put("Pos", pos);
-                            entities.add(new LitematicNbt.NbtCompound(entries));
-                        }
-                    }
-                } catch (Throwable t) {
-                    plugin.getLogger().log(Level.WARNING, "save: entity extraction failed (continuing)", t);
-                }
-            });
+            // Entities were captured inside each chunk's own region task
+            // (Folia-safe). The old single world.getNearbyEntities() pass from
+            // the global region scheduler threw "Cannot getEntities
+            // asynchronously" on Folia and saved zero entities.
+            CompletableFuture<Void> entityPass = CompletableFuture.completedFuture(null);
 
             entityPass.whenComplete((vv, tt) -> {
                 // Build the schematic POJO + write to disk on an async worker.

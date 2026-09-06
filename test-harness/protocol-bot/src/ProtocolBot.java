@@ -106,6 +106,7 @@ public final class ProtocolBot {
     private static final int SERVUX_C2S_METADATA_REQUEST = 2;
     private static final int SERVUX_C2S_NBT_STREAM_START = 12;
     private static final int SERVUX_C2S_NBT_STREAM_DATA = 13;
+    private static final int SERVUX_S2C_TASK_STATUS_SYNC = 16;
 
     private static final String CHANNEL_LITEMATICS = "servux:litematics";
 
@@ -117,6 +118,43 @@ public final class ProtocolBot {
     private static int originX = 100, originY = 64, originZ = 100;
     private static int holdSeconds = 10;
     private static boolean verbose = true;
+    /**
+     * Servux wire era to emulate: 1 = pre-0.28.5 (VarInt txId + vanilla
+     * NBT, Litematic-Transmit sub-protocol), 2 = 26.2-0.28.5+ (metadata
+     * {version: Int 2}, single Data Tag blob with Task=LitematicaPaste).
+     */
+    private static int wire = 1;
+
+    // ---- issue #4 placement options (defaults match the pre-0.8 payload)
+    private static int rotationOrdinal = 0;
+    private static int mirrorOrdinal = 0;
+    private static String replaceMode = "NONE";
+    private static boolean ignoreEntities = false;
+    private static String layerSingleAxis = null;
+    private static int layerSingleValue = 0;
+    private static final java.util.List<String> subRegionSpecs = new java.util.ArrayList<>();
+
+    /** Builds the SubRegions compound from the --sub-region CLI specs. */
+    private static LitematicNbt.NbtCompound buildSubRegions() {
+        LitematicNbt.NbtCompound subs = new LitematicNbt.NbtCompound();
+        for (String spec : subRegionSpecs) {
+            String[] p = spec.split(":");
+            String name = p[0];
+            LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
+            c.putString("Name", name);
+            c.putByte("Enabled", (byte) (p.length > 1 && p[1].equals("0") ? 0 : 1));
+            if (p.length > 2 && !p[2].equals("-")) {
+                String[] xyz = p[2].split(",");
+                c.putIntArray("Pos", new int[] {
+                        Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2])});
+            }
+            c.putInt("Rotation", p.length > 3 ? Integer.parseInt(p[3]) : 0);
+            c.putInt("Mirror", p.length > 4 ? Integer.parseInt(p[4]) : 0);
+            c.putByte("IgnoreEntities", (byte) 0);
+            subs.put(name, c);
+        }
+        return subs;
+    }
 
     public static void main(String[] args) throws Exception {
         parseArgs(args);
@@ -166,14 +204,19 @@ public final class ProtocolBot {
 
             // Request Servux metadata
             sendServuxMetadataRequest(out);
-            log("[servux] sent C2S_METADATA_REQUEST");
+            log("[servux] sent C2S_METADATA_REQUEST (wire v" + wire + ")");
 
             // Stream the litematic
             byte[] schematic = Files.readAllBytes(litematicPath);
             log("[servux] read " + schematic.length + " bytes from " + litematicPath);
 
-            streamDirectPaste(out, schematic, originX, originY, originZ);
-            log("[servux] streamed C2S_NBT_STREAM_START + DATA frames");
+            if (wire >= 2) {
+                streamDirectPasteV2(out, schematic, originX, originY, originZ);
+                log("[servux] streamed v2 LitematicaPaste Data Tag blob as type-13 slices");
+            } else {
+                streamDirectPaste(out, schematic, originX, originY, originZ);
+                log("[servux] streamed C2S_NBT_STREAM_START + DATA frames");
+            }
 
             // Pump for a while, handling keep-alives + reading metadata reply
             log("[play] pumping packets for " + holdSeconds + "s to drain replies + paste");
@@ -489,9 +532,33 @@ public final class ProtocolBot {
                     Integer ver   = (c.entries().get("version") instanceof LitematicNbt.NbtInt    i) ? i.value() : null;
                     String servux = (c.entries().get("servux") instanceof LitematicNbt.NbtString s) ? s.value() : null;
                     log("[servux] name=" + name + " id=" + id + " version=" + ver + " servux=" + servux);
-                    if ("litematic_data".equals(name) && servux != null && servux.startsWith("LitematicaFolia")) {
+                    if (wire >= 2) {
+                        // Replicate the 26.2-0.28.5 client's hard checks
+                        // (EntityDataManager.receiveServuxMetadata).
+                        if ("litematic_data".equals(name)
+                                && ver != null && ver == 2
+                                && servux != null && servux.startsWith("servux-fabric-")) {
+                            log("[servux] METADATA OK — v2 checks passed (version=2, servux prefix)");
+                        } else {
+                            log("[servux] METADATA REJECTED by v2 client rules — version=" + ver
+                                    + " servux=" + servux);
+                        }
+                    } else if ("litematic_data".equals(name) && servux != null && servux.startsWith("LitematicaFolia")) {
                         log("[servux] METADATA OK — bridge active");
                     }
+                }
+            } else if (type == SERVUX_S2C_TASK_STATUS_SYNC) {
+                LitematicNbt.NbtCompound sync = decodeDataTagBlob(d);
+                if (sync != null) {
+                    Byte complete = (sync.entries().get("InfoHudComplete") instanceof LitematicNbt.NbtByte nb)
+                            ? nb.value() : null;
+                    log("[servux] TASK_STATUS_SYNC InfoHudComplete=" + complete
+                            + " keys=" + sync.entries().keySet());
+                    if (complete != null && complete == (byte) 1) {
+                        log("[servux] TASK COMPLETE SYNC OK");
+                    }
+                } else {
+                    log("[servux] TASK_STATUS_SYNC with empty payload");
                 }
             }
         } catch (Throwable t) {
@@ -528,8 +595,15 @@ public final class ProtocolBot {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         DataOutputStream d = new DataOutputStream(b);
         writeVarInt(d, SERVUX_C2S_METADATA_REQUEST);
-        // Empty NBT compound — write TAG_END (0)
-        d.writeByte(0);
+        if (wire >= 2) {
+            // 26.2-0.28.5 client shape: vanilla network NBT {version: Int 2}.
+            LitematicNbt.NbtCompound req = new LitematicNbt.NbtCompound();
+            req.putInt("version", 2);
+            writeNbtCompoundAnonymous(d, req);
+        } else {
+            // Old-shape request: empty NBT compound — write TAG_END (0)
+            d.writeByte(0);
+        }
         sendCustomPayload(out, PLAY_C2S_CUSTOM_PAYLOAD, CHANNEL_LITEMATICS, b.toByteArray());
     }
 
@@ -648,6 +722,138 @@ public final class ProtocolBot {
         if (verbose) log("[servux]   outer-splitter frame -> " + frames + " slice(s), " + payload.length + " body bytes");
     }
 
+    /**
+     * Wire-v2 (Litematica 26.2-0.28.5) Servux Paste: ONE application
+     * payload — a "Data Tag" blob {@code Int32(len) + gzip(NBT file
+     * stream, empty root name)} — carrying the whole placement compound
+     * ({@code Task=LitematicaPaste}, {@code Schematics} = full .litematic
+     * root compound inline), split into type-13 slices by the outer
+     * splitter. No transactionId, no Transmit sub-protocol.
+     */
+    private static void streamDirectPasteV2(DataOutputStream out, byte[] gzippedLitematic,
+                                            int ox, int oy, int oz) throws IOException {
+        // Parse the .litematic (gzipped NBT file with a named root) into
+        // a compound so it can ride inline under "Schematics".
+        LitematicNbt.NbtCompound schematicRoot;
+        try (DataInputStream dis = new DataInputStream(new java.util.zip.GZIPInputStream(
+                new ByteArrayInputStream(gzippedLitematic)))) {
+            LitematicNbt.NamedTag named = LitematicNbt.readNamedTag(dis);
+            if (!(named.tag() instanceof LitematicNbt.NbtCompound c)) {
+                throw new IOException("litematic root is not a compound");
+            }
+            schematicRoot = c;
+        }
+        log("[servux] parsed .litematic root keys: " + schematicRoot.entries().keySet());
+
+        LitematicNbt.NbtCompound data = new LitematicNbt.NbtCompound();
+        data.putString("Name", "protobot-paste");
+        data.putString("HashCode", UUID.randomUUID().toString());
+        data.put("Schematics", schematicRoot);
+        data.putIntArray("Origin", new int[] {ox, oy, oz});
+        data.putInt("Rotation", rotationOrdinal);   // v2: enum ORDINAL
+        data.putInt("Mirror", mirrorOrdinal);       // v2: enum ORDINAL
+        data.put("SubRegions", buildSubRegions());
+        data.putString("ReplaceMode", replaceMode);
+        if (ignoreEntities) data.putByte("IgnoreEntities", (byte) 1);
+        if (layerSingleAxis != null) {
+            data.putString("PasteLayerBehavior", "rendered_only");
+            LitematicNbt.NbtCompound range = new LitematicNbt.NbtCompound();
+            range.putString("mode", "single_layer");
+            range.putString("axis", layerSingleAxis);
+            range.putInt("layer_single", layerSingleValue);
+            range.putInt("layer_above", 0);
+            range.putInt("layer_below", 0);
+            range.putInt("layer_range_min", 0);
+            range.putInt("layer_range_max", 0);
+            range.putByte("hotkey_range_min", (byte) 0);
+            range.putByte("hotkey_range_max", (byte) 0);
+            data.put("RenderLayerRange", range);
+        } else {
+            data.putString("PasteLayerBehavior", "ALL");
+        }
+        data.putString("Task", "LitematicaPaste");
+        data.putInt("Interval", 1);
+        log("[servux] placement: rot=" + rotationOrdinal + " mirror=" + mirrorOrdinal
+                + " replace=" + replaceMode + " ignoreEntities=" + ignoreEntities
+                + " subRegions=" + subRegionSpecs
+                + (layerSingleAxis != null ? " layer=" + layerSingleAxis + "@" + layerSingleValue : ""));
+
+        byte[] blob = encodeDataTagBlob(data);
+        log("[servux] v2 Data Tag blob: " + blob.length + " bytes (Int32 + gzip)");
+        sendSplitterSlices(out, blob);
+    }
+
+    /** Data Tag blob = Int32(len) + gzip(NBT file stream, root name ""). */
+    private static byte[] encodeDataTagBlob(LitematicNbt.NbtCompound c) throws IOException {
+        ByteArrayOutputStream gz = new ByteArrayOutputStream();
+        try (DataOutputStream dos = new DataOutputStream(new java.util.zip.GZIPOutputStream(gz))) {
+            LitematicNbt.writeNamedTag(dos, new LitematicNbt.NamedTag("", c));
+        }
+        byte[] body = gz.toByteArray();
+        ByteArrayOutputStream outBytes = new ByteArrayOutputStream(body.length + 4);
+        DataOutputStream dos = new DataOutputStream(outBytes);
+        dos.writeInt(body.length);
+        dos.write(body);
+        dos.flush();
+        return outBytes.toByteArray();
+    }
+
+    /** Decode a Data Tag blob (Int32 + gzip NBT file stream) or null. */
+    private static LitematicNbt.NbtCompound decodeDataTagBlob(DataInputStream d) throws IOException {
+        int len = d.readInt();
+        byte[] body = new byte[len];
+        d.readFully(body);
+        try (DataInputStream dis = new DataInputStream(new java.util.zip.GZIPInputStream(
+                new ByteArrayInputStream(body)))) {
+            if (dis.read() != LitematicNbt.TAG_COMPOUND) {
+                return null;
+            }
+            // Re-frame: id + rest (name + payload) for readNamedTag.
+            ByteArrayOutputStream rest = new ByteArrayOutputStream();
+            rest.write(LitematicNbt.TAG_COMPOUND);
+            int b;
+            while ((b = dis.read()) != -1) rest.write(b);
+            LitematicNbt.NamedTag named = LitematicNbt.readNamedTag(
+                    new DataInputStream(new ByteArrayInputStream(rest.toByteArray())));
+            return named.tag() instanceof LitematicNbt.NbtCompound c ? c : null;
+        }
+    }
+
+    /**
+     * Chunk one application payload into type-13 wire packets via the
+     * outer splitter (first slice prefixed with VarInt(totalLen)).
+     */
+    private static void sendSplitterSlices(DataOutputStream out, byte[] payload) throws IOException {
+        final int SLICE_BUDGET = 16 * 1024;
+        int offset = 0;
+        boolean firstSlice = true;
+        int frames = 0;
+        while (offset < payload.length || firstSlice) {
+            ByteArrayOutputStream slice = new ByteArrayOutputStream();
+            DataOutputStream sliceOut = new DataOutputStream(slice);
+            writeVarInt(sliceOut, SERVUX_C2S_NBT_STREAM_DATA);
+            int sliceHdrLen = 0;
+            if (firstSlice) {
+                ByteArrayOutputStream hdr = new ByteArrayOutputStream();
+                writeVarInt(new DataOutputStream(hdr), payload.length);
+                sliceOut.write(hdr.toByteArray());
+                sliceHdrLen = hdr.size();
+                firstSlice = false;
+            }
+            int avail = payload.length - offset;
+            int take = Math.min(avail, SLICE_BUDGET - sliceHdrLen - 8);
+            if (take < 0) take = 0;
+            if (take > 0) {
+                sliceOut.write(payload, offset, take);
+                offset += take;
+            }
+            sendCustomPayload(out, PLAY_C2S_CUSTOM_PAYLOAD, CHANNEL_LITEMATICS, slice.toByteArray());
+            frames++;
+            if (avail <= take) break;
+        }
+        if (verbose) log("[servux]   splitter -> " + frames + " slice(s), " + payload.length + " body bytes");
+    }
+
     private static void writeNbtCompoundAnonymous(DataOutputStream out, LitematicNbt.NbtCompound c) throws IOException {
         // Anonymous-root NBT (1.20.2+ network form): TAG_COMPOUND byte then payload.
         // Internal LitematicNbt only knows how to write NamedTag (id + utfName + payload).
@@ -760,6 +966,25 @@ public final class ProtocolBot {
                 case "--username" -> username = args[++i];
                 case "--hold-seconds" -> holdSeconds = Integer.parseInt(args[++i]);
                 case "--quiet" -> verbose = false;
+                case "--wire" -> {
+                    String w = args[++i];
+                    wire = w.equals("v2") || w.equals("2") ? 2 : 1;
+                }
+                // ---- issue #4 placement options (v2 LitematicaPaste payload)
+                case "--rotation" -> rotationOrdinal = Integer.parseInt(args[++i]);
+                case "--mirror" -> mirrorOrdinal = Integer.parseInt(args[++i]);
+                case "--replace-mode" -> replaceMode = args[++i];
+                case "--ignore-entities" -> ignoreEntities = true;
+                // --layer-single <axis>,<value>: PasteLayerBehavior=rendered_only
+                // with a single_layer RenderLayerRange.
+                case "--layer-single" -> {
+                    String[] p = args[++i].split(",");
+                    layerSingleAxis = p[0];
+                    layerSingleValue = Integer.parseInt(p[1]);
+                }
+                // --sub-region <name>:<enabled 0|1>:<posX,posY,posZ or ->:<rotOrdinal>[:<mirrorOrdinal>]
+                // (repeatable). "-" for pos means "no Pos override sent".
+                case "--sub-region" -> subRegionSpecs.add(args[++i]);
                 default -> System.err.println("unknown arg: " + args[i]);
             }
         }

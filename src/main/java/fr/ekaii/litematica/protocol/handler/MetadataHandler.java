@@ -4,43 +4,109 @@ import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
+import fr.ekaii.litematica.protocol.ProtocolSessions;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
 import java.util.logging.Logger;
 
 /**
- * Handles the Servux handshake + simple BlockEntity / Entity NBT replies.
+ * Handles the Servux handshake (C2S metadata request → S2C metadata) and
+ * negotiates the per-player wire version.
  *
- * <p>When a Servux-equipped client joins, the client opens the
- * {@code servux:litematics} channel and immediately sends a
- * {@link ProtocolConstants.Litematics#C2S_METADATA_REQUEST}. We respond
- * with {@link ProtocolConstants.Litematics#S2C_METADATA} carrying the
- * canonical Servux metadata compound (see
- * {@link #buildMetadataPayload()}).
+ * <h2>Version negotiation</h2>
  *
- * <p>Source of truth: upstream {@code LitematicsDataProvider.java:69-72}.
+ * The {@code version} tag of the request discriminates the client era:
+ * <ul>
+ *   <li>Litematica 26.2-0.28.5+ (wire v2, Data Tag protocol) sends
+ *       {@code {version: Int 2}} — see upstream
+ *       {@code EntityDataManager.requestMetadata}.</li>
+ *   <li>Litematica 26.2-0.28.0..0.28.4 (wire v1) sends
+ *       {@code {version: String MOD_STRING}}.</li>
+ * </ul>
+ *
+ * The reply mirrors the negotiated era:
+ * <ul>
+ *   <li>v2 clients hard-validate {@code version == 2} and
+ *       {@code servux.startsWith("servux-fabric-" + MC_VERSION)}; on
+ *       mismatch they disable their entity-data-sync config, killing
+ *       Direct Paste client-side. We send exactly what they require.</li>
+ *   <li>v1 clients only warn on mismatch; they keep the legacy
+ *       {@code version=1} + plain server-name reply that 0.5.x shipped.</li>
+ * </ul>
+ *
+ * <p>Source of truth: upstream {@code LitematicsDataProvider.register}
+ * (26.2-0.11.3) and client {@code EntityDataManager.receiveServuxMetadata}
+ * (26.2-0.28.5 vs 26.2-0.28.3). See SERVUX_WIRE_FORMAT.md.
  */
 public final class MetadataHandler {
 
     private static final Logger LOG = Logger.getLogger("LitematicaFolia/MetadataHandler");
 
     private final Plugin plugin;
+    private final ProtocolSessions sessions;
 
-    public MetadataHandler(Plugin plugin) {
+    public MetadataHandler(Plugin plugin, ProtocolSessions sessions) {
         this.plugin = plugin;
+        this.sessions = sessions;
     }
 
     /**
-     * C2S {@code MetadataRequest} → S2C {@code MetadataResponse} with the
-     * canonical 4-key Servux metadata compound.
+     * C2S {@code MetadataRequest} → S2C {@code MetadataResponse}, with
+     * per-player wire-version tracking.
      */
     public void onMetadataRequest(Player player, ProtocolBuffer.Reader r) throws Exception {
-        // Drain any optional NBT the client may send (Servux currently
-        // sends an empty compound here).
-        try { r.readNbt(); } catch (Throwable ignored) {}
+        LitematicNbt.NbtCompound req = null;
+        try {
+            req = r.readNbt();
+        } catch (Throwable ignored) {
+            // Tolerate an absent/garbled request compound — treat as v1.
+        }
 
-        LitematicNbt.NbtCompound meta = buildMetadataPayload();
+        int wire = detectWireVersion(req);
+        sessions.setVersion(player.getUniqueId(), wire);
+        LOG.info("[diag-net] metadata request from " + player.getName()
+                + " -> negotiated wire v" + wire
+                + (req != null && req.get("version") != null
+                        ? " (version tag: " + req.get("version") + ")" : " (no version tag)"));
+
+        sendMetadata(player, wire);
+    }
+
+    /**
+     * Wire-version discriminator: an {@code Int} {@code version} tag of
+     * 2 or above marks a v2 (0.28.5+) client; a {@code String} tag (the
+     * old MOD_STRING) or a missing tag marks a v1 client.
+     */
+    static int detectWireVersion(LitematicNbt.NbtCompound req) {
+        if (req != null && req.get("version") instanceof LitematicNbt.NbtInt i
+                && i.value() >= ProtocolConstants.LITEMATICS_PROTOCOL_VERSION_V2) {
+            return ProtocolSessions.V2;
+        }
+        return ProtocolSessions.V1;
+    }
+
+    /**
+     * Build the canonical 4-key Servux metadata compound for the given
+     * wire era: {@code name}, {@code id}, {@code version}, {@code servux}.
+     */
+    public LitematicNbt.NbtCompound buildMetadataPayload(int wireVersion) {
+        LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
+        c.putString("name", ProtocolConstants.METADATA_PROVIDER_NAME);
+        c.putString("id",   ProtocolConstants.CHANNEL_LITEMATICS);
+        if (wireVersion >= ProtocolSessions.V2) {
+            c.putInt("version", ProtocolConstants.LITEMATICS_PROTOCOL_VERSION_V2);
+            c.putString("servux", ProtocolConstants.servuxCompatString(
+                    plugin.getServer().getMinecraftVersion()));
+        } else {
+            c.putInt("version", ProtocolConstants.LITEMATICS_PROTOCOL_VERSION);
+            c.putString("servux", ProtocolConstants.SERVER_NAME);
+        }
+        return c;
+    }
+
+    private void sendMetadata(Player player, int wireVersion) throws Exception {
+        LitematicNbt.NbtCompound meta = buildMetadataPayload(wireVersion);
         byte[] bytes = PacketHandler.buildLitematics(
                 ProtocolConstants.Litematics.S2C_METADATA,
                 w -> w.writeNbt(meta));
@@ -48,65 +114,22 @@ public final class MetadataHandler {
     }
 
     /**
-     * Build the canonical 4-key Servux metadata compound:
-     * <ul>
-     *   <li>{@code "name"}    — provider name; Servux convention is
-     *       {@code "litematic_data"}.</li>
-     *   <li>{@code "id"}      — channel identifier
-     *       ({@code "servux:litematics"}).</li>
-     *   <li>{@code "version"} — provider protocol version (1 for
-     *       Litematica per upstream
-     *       {@code ServuxLitematicaPacket.PROTOCOL_VERSION}).</li>
-     *   <li>{@code "servux"}  — server software identifier; Servux uses
-     *       its own {@code MOD_STRING}, we emit
-     *       {@link ProtocolConstants#SERVER_NAME} which any reasonable
-     *       client treats as opaque.</li>
-     * </ul>
-     * Servux clients ignore unknown keys; we deliberately do NOT emit
-     * the previously-drafted {@code ServerVersion},
-     * {@code ProtocolVersion}, or {@code Capabilities} keys because
-     * (a) they don't exist on the upstream wire and (b) the
-     * "Capabilities" path was tied to an Easy Place V3 design that
-     * Servux does not implement as a custom packet anyway.
-     */
-    public LitematicNbt.NbtCompound buildMetadataPayload() {
-        LitematicNbt.NbtCompound c = new LitematicNbt.NbtCompound();
-        c.putString("name",    ProtocolConstants.METADATA_PROVIDER_NAME);
-        c.putString("id",      ProtocolConstants.CHANNEL_LITEMATICS);
-        c.putInt   ("version", ProtocolConstants.LITEMATICS_PROTOCOL_VERSION);
-        c.putString("servux",  ProtocolConstants.SERVER_NAME);
-        return c;
-    }
-
-    /**
-     * Proactively push the metadata to a player after they've joined and
-     * the {@code servux:litematics} channel has been registered. Litematica
-     * 0.27.x does NOT auto-send {@code C2S_METADATA_REQUEST} on join — it
-     * only sends it when the user triggers a Servux-using action. By
-     * pushing the metadata server-initiated, we flip the client's
-     * {@code servuxRegistered=true} flag without requiring user
-     * interaction, which makes Litematica's "Server-side paste" menu
-     * options surface immediately and prevents falling back to the
-     * legacy {@code /setblock}+{@code /fill} spam path.
-     *
-     * <p>Safe to call multiple times — Litematica is idempotent on
-     * metadata receipt.
+     * Proactively push the metadata to a player after join, as a
+     * fallback for clients that never send their own request. Every
+     * MC 26.2 Litematica build (0.28.x) auto-requests on its tick loop,
+     * so in practice the client's request lands first and fixes the
+     * negotiated version; this push then re-sends idempotently. For a
+     * player with no handshake on record we push the v2 shape: 0.28.5
+     * validates it, 0.28.0-0.28.4 warn and accept.
      */
     public void pushMetadata(Player player) {
         try {
-            LitematicNbt.NbtCompound meta = buildMetadataPayload();
-            byte[] bytes = PacketHandler.buildLitematics(
-                    ProtocolConstants.Litematics.S2C_METADATA,
-                    w -> w.writeNbt(meta));
-            player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, bytes);
-            LOG.info("[diag-net] TX servux:litematics S2C_METADATA pushed to " + player.getName());
+            int wire = sessions.versionOr(player.getUniqueId(), ProtocolSessions.V2);
+            sendMetadata(player, wire);
+            LOG.info("[diag-net] TX servux:litematics S2C_METADATA (v" + wire
+                    + " shape) pushed to " + player.getName());
         } catch (Throwable t) {
             LOG.warning("pushMetadata failed for " + player.getName() + ": " + t);
         }
     }
-
-    // BlockEntity / Entity / Bulk replies live in their own dedicated
-    // handlers (see BlockEntityRequestHandler, EntityRequestHandler,
-    // BulkNbtRequestHandler). MetadataHandler is now only responsible
-    // for the Servux handshake.
 }

@@ -106,6 +106,13 @@ public final class NmsBridge26_2 implements NmsBridge {
 
     @Override
     public org.bukkit.entity.Entity spawnEntityFromNbt(Location loc, LitematicNbt.NbtTag nbt) {
+        return spawnEntityFromNbt(loc, nbt, 0, 0, 0);
+    }
+
+    @Override
+    public org.bukkit.entity.Entity spawnEntityFromNbt(Location loc, LitematicNbt.NbtTag nbt,
+                                                       int rotationOrdinal, int mirrorMainOrdinal,
+                                                       int mirrorSubOrdinal) {
         if (!(nbt instanceof LitematicNbt.NbtCompound)) {
             return null;
         }
@@ -118,6 +125,9 @@ public final class NmsBridge26_2 implements NmsBridge {
             if (id.endsWith(":player") || id.equals("player") || id.endsWith(":Player")) {
                 return null;
             }
+            net.minecraft.world.level.block.Rotation rot = nmsRotation(rotationOrdinal);
+            net.minecraft.world.level.block.Mirror mirrorMain = nmsMirror(mirrorMainOrdinal);
+            net.minecraft.world.level.block.Mirror mirrorSub = nmsMirror(mirrorSubOrdinal);
             // 26.2: the CompoundTag overload now pairs with EntitySpawnRequest;
             // keep EntitySpawnReason.LOAD by going through the ValueInput overload.
             var entityInput = TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), tag);
@@ -125,8 +135,52 @@ public final class NmsBridge26_2 implements NmsBridge {
                     entityInput, level, net.minecraft.world.entity.EntitySpawnReason.LOAD,
                     entity -> {
                         entity.setUUID(java.util.UUID.randomUUID());
+                        // Placement orientation: replicate the Litematica CLIENT's
+                        // rotateEntity VERBATIM (WorldPlacingUtils.rotateEntity, the
+                        // schematic-world PREVIEW path, identical in
+                        // SchematicPlacingUtils.rotateEntity, the client paste path):
+                        //
+                        //   float rotationYaw = entity.getYRot();
+                        //   if (mirrorMain != NONE) rotationYaw = entity.mirror(mirrorMain);
+                        //   if (mirrorSub  != NONE) rotationYaw = entity.mirror(mirrorSub);
+                        //   if (rot != NONE) rotationYaw += entity.getYRot() - entity.rotate(rot);
+                        //
+                        // The paste target is "match what the client preview shows",
+                        // so the upstream quirks are reproduced deliberately:
+                        //  - mirror()/rotate() read the entity's ORIGINAL yaw (no
+                        //    setYRot in between), so a sub mirror REPLACES the main
+                        //    mirror's yaw instead of composing;
+                        //  - vanilla Entity.rotate(CW90) returns wrap(yaw)+90, so the
+                        //    "yaw += getYRot() - rotate(rot)" line yields yaw-90 on a
+                        //    clockwise quarter turn: the OPPOSITE sense of vanilla
+                        //    StructureTemplate placement, but exactly what the client
+                        //    preview renders. Pure-math twin (unit-tested):
+                        //    PlacementTransform.transformYaw.
+                        // mirror()/rotate() are still invoked for their side effects
+                        // on hanging entities (item frame / painting facing updates).
+                        float rotationYaw = entity.getYRot();
+                        if (mirrorMain != net.minecraft.world.level.block.Mirror.NONE) {
+                            rotationYaw = entity.mirror(mirrorMain);
+                        }
+                        if (mirrorSub != net.minecraft.world.level.block.Mirror.NONE) {
+                            rotationYaw = entity.mirror(mirrorSub);
+                        }
+                        if (rot != net.minecraft.world.level.block.Rotation.NONE) {
+                            rotationYaw += entity.getYRot() - entity.rotate(rot);
+                        }
                         entity.snapTo(loc.getX(), loc.getY(), loc.getZ(),
-                                entity.getYRot(), entity.getXRot());
+                                rotationYaw, entity.getXRot());
+                        // Upstream EntityUtils.setEntityRotations: pin head/body yaw
+                        // (and their prev-tick fields) so livings render the pasted
+                        // yaw immediately, like the client preview does.
+                        entity.setYRot(rotationYaw);
+                        entity.yRotO = rotationYaw;
+                        if (entity instanceof net.minecraft.world.entity.LivingEntity living) {
+                            living.yHeadRot = rotationYaw;
+                            living.yBodyRot = rotationYaw;
+                            living.yHeadRotO = rotationYaw;
+                            living.yBodyRotO = rotationYaw;
+                        }
                         return entity;
                     });
             if (spawned == null) return null;
@@ -142,6 +196,41 @@ public final class NmsBridge26_2 implements NmsBridge {
             LOG.log(java.util.logging.Level.WARNING, "spawnEntityFromNbt failed", t);
             return null;
         }
+    }
+
+    @Override
+    public org.bukkit.block.data.BlockData transformBlockData(
+            org.bukkit.block.data.BlockData data,
+            int mirrorMainOrdinal, int mirrorSubOrdinal, int rotationOrdinal) {
+        if (mirrorMainOrdinal == 0 && mirrorSubOrdinal == 0 && rotationOrdinal == 0) {
+            return data;
+        }
+        try {
+            BlockState state = ((org.bukkit.craftbukkit.block.data.CraftBlockData) data).getState();
+            net.minecraft.world.level.block.Mirror mm = nmsMirror(mirrorMainOrdinal);
+            net.minecraft.world.level.block.Mirror ms = nmsMirror(mirrorSubOrdinal);
+            net.minecraft.world.level.block.Rotation rot = nmsRotation(rotationOrdinal);
+            // Upstream order (SchematicPlacingUtils): main mirror, sub mirror,
+            // combined rotation.
+            if (mm != net.minecraft.world.level.block.Mirror.NONE) state = state.mirror(mm);
+            if (ms != net.minecraft.world.level.block.Mirror.NONE) state = state.mirror(ms);
+            if (rot != net.minecraft.world.level.block.Rotation.NONE) state = state.rotate(rot);
+            return org.bukkit.craftbukkit.block.data.CraftBlockData.createData(state);
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.WARNING, "transformBlockData failed for "
+                    + data.getAsString() + " — pasting untransformed", t);
+            return data;
+        }
+    }
+
+    private static net.minecraft.world.level.block.Rotation nmsRotation(int ordinal) {
+        net.minecraft.world.level.block.Rotation[] v = net.minecraft.world.level.block.Rotation.values();
+        return ordinal >= 0 && ordinal < v.length ? v[ordinal] : net.minecraft.world.level.block.Rotation.NONE;
+    }
+
+    private static net.minecraft.world.level.block.Mirror nmsMirror(int ordinal) {
+        net.minecraft.world.level.block.Mirror[] v = net.minecraft.world.level.block.Mirror.values();
+        return ordinal >= 0 && ordinal < v.length ? v[ordinal] : net.minecraft.world.level.block.Mirror.NONE;
     }
 
     // --------------------------------------------------------- Pending ticks

@@ -125,7 +125,7 @@ fi
 if [[ -n "${JAVA_MAJOR}" && "${JAVA_MAJOR}" -ge 21 ]]; then
     EXTRA_JVM_ARGS+=('--add-modules=jdk.incubator.vector')
 fi
-SERVER_JAR="$(ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null; ls -1 "${SERVER_DIR}"/paper*.jar 2>/dev/null; true)"
+SERVER_JAR="$(ls -1 "${SERVER_DIR}"/folia*.jar 2>/dev/null; ls -1 "${SERVER_DIR}"/luminol*.jar 2>/dev/null; ls -1 "${SERVER_DIR}"/paper*.jar 2>/dev/null; true)"
 SERVER_JAR="$(printf '%s\n' "${SERVER_JAR}" | head -n1)"
 if [[ -z "${SERVER_JAR}" ]]; then
     write_result "FAIL" "No server jar in ${SERVER_DIR}"

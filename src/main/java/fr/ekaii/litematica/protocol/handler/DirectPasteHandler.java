@@ -3,13 +3,19 @@ package fr.ekaii.litematica.protocol.handler;
 import fr.ekaii.litematica.core.LitematicNbt;
 import fr.ekaii.litematica.core.LitematicReader;
 import fr.ekaii.litematica.core.LitematicSchematic;
+import fr.ekaii.litematica.paste.LayerFilter;
 import fr.ekaii.litematica.paste.PasteOperation;
 import fr.ekaii.litematica.paste.PasteOptions;
 import fr.ekaii.litematica.paste.PasteResult;
+import fr.ekaii.litematica.paste.PlacementTransform;
+import fr.ekaii.litematica.paste.ReplaceBehavior;
+import fr.ekaii.litematica.paste.SubRegionOverride;
+import fr.ekaii.litematica.protocol.DataTagCodec;
 import fr.ekaii.litematica.protocol.PacketHandler;
 import fr.ekaii.litematica.protocol.PacketSplitter;
 import fr.ekaii.litematica.protocol.ProtocolBuffer;
 import fr.ekaii.litematica.protocol.ProtocolConstants;
+import fr.ekaii.litematica.protocol.ProtocolSessions;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -108,8 +114,12 @@ public final class DirectPasteHandler {
      */
     private final java.util.Set<UUID> activePastes = ConcurrentHashMap.newKeySet();
 
-    public DirectPasteHandler(Plugin plugin) {
+    /** Per-player negotiated wire version (v1 vanilla-NBT vs v2 Data Tag). */
+    private final ProtocolSessions sessions;
+
+    public DirectPasteHandler(Plugin plugin, ProtocolSessions sessions) {
         this.plugin = plugin;
+        this.sessions = sessions;
         int cap = plugin.getConfig().getInt("protocol.maxDirectPasteSize",
                 PacketSplitter.DEFAULT_MAX_C2S_RECEIVE);
         this.splitter = new PacketSplitter(cap);
@@ -152,22 +162,39 @@ public final class DirectPasteHandler {
         LOG.info("[direct-paste] splitter reassembled " + assembled.length + " bytes from "
                 + player.getName());
 
-        // Decode (VarInt transactionId + NBT(compound)) of the
-        // application-layer payload Servux flushed.
-        ProtocolBuffer.Reader payloadReader = new ProtocolBuffer.Reader(assembled);
-        int transactionId;
+        // The reassembled application payload changed shape in wire v2
+        // (Servux 26.2-0.11.3 / Litematica 26.2-0.28.5):
+        //   v1: VarInt(transactionId) + vanilla network NBT compound
+        //   v2: Data Tag blob (Int32 length + gzipped NBT file stream) —
+        //       no transactionId at all.
+        // Prefer the negotiated version from the metadata handshake; fall
+        // back to framing detection (exact Int32 length prefix), which is
+        // unambiguous below a ~200 MB payload.
+        boolean v2 = sessions.isKnown(player.getUniqueId())
+                ? sessions.isV2(player.getUniqueId())
+                : DataTagCodec.looksLikeDataTagBlob(assembled);
+        int transactionId = -1;
         LitematicNbt.NbtCompound payload;
         try {
-            transactionId = payloadReader.readVarInt();
-            payload = payloadReader.readNbt();
+            if (v2) {
+                payload = DataTagCodec.decode(assembled);
+            } else {
+                ProtocolBuffer.Reader payloadReader = new ProtocolBuffer.Reader(assembled);
+                transactionId = payloadReader.readVarInt();
+                payload = payloadReader.readNbt();
+            }
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "splitter payload parse failed for " + player.getName(), t);
+            LOG.log(Level.WARNING, "splitter payload parse failed for " + player.getName()
+                    + " (wire v" + (v2 ? 2 : 1) + ")", t);
             return;
         }
         if (payload == null) {
-            LOG.warning("splitter payload had null NBT root for " + player.getName());
+            LOG.warning("splitter payload had null NBT root for " + player.getName()
+                    + " (wire v" + (v2 ? 2 : 1) + ")");
             return;
         }
+        LOG.info("[direct-paste] payload decoded (wire v" + (v2 ? 2 : 1) + ", task="
+                + orEmpty(payload.getString("Task")) + ") from " + player.getName());
         handleTransmitFrame(player, transactionId, payload);
     }
 
@@ -258,7 +285,9 @@ public final class DirectPasteHandler {
             LitematicSchematic schem = LitematicReader.read(fileBytes);
 
             Location origin   = readOrigin(session.placementData, player);
-            PasteOptions opts = readOptions(session.placementData, origin);
+            PasteOptions opts = session.placementData == null
+                    ? PasteOptions.defaults(origin)
+                    : parsePlacementOptions(session.placementData, origin, player);
 
             new PasteOperation(plugin, schem, opts, player.getName()).execute()
                     .whenComplete((res, err) -> {
@@ -318,22 +347,6 @@ public final class DirectPasteHandler {
                 LOG.warning("[direct-paste] LitematicaPaste no usable origin from " + player.getName());
                 return;
             }
-            Byte ignoreEntities = payload.getByte("IgnoreEntities");
-            boolean placeEntities = ignoreEntities == null || ignoreEntities == 0;
-
-            // Map Litematica's Rotation enum string → yaw integer.
-            // NONE=0, CLOCKWISE_90=90, CLOCKWISE_180=180, COUNTERCLOCKWISE_90=270.
-            int yaw = 0;
-            String rot = payload.getString("Rotation");
-            if (rot != null) {
-                switch (rot) {
-                    case "CLOCKWISE_90"       -> yaw = 90;
-                    case "CLOCKWISE_180"      -> yaw = 180;
-                    case "COUNTERCLOCKWISE_90"-> yaw = 270;
-                    default                   -> yaw = 0;
-                }
-            }
-
             LitematicSchematic schem;
             try {
                 schem = LitematicReader.fromCompound(schematicsCompound);
@@ -346,17 +359,7 @@ public final class DirectPasteHandler {
                 return;
             }
 
-            PasteOptions defaults = PasteOptions.defaults(origin);
-            PasteOptions opts = new PasteOptions(
-                    origin,
-                    placeEntities,
-                    defaults.placeTileEntities(),
-                    defaults.placePendingTicks(),
-                    defaults.deferredPhysics(),
-                    defaults.observersLast(),
-                    defaults.maxBlocksPerChunkTask(),
-                    yaw,
-                    null);
+            PasteOptions opts = parsePlacementOptions(payload, origin, player);
 
             player.sendMessage("[LitematicaFolia] Direct Paste via Servux — placing "
                     + schem.regions.size() + " region(s) at "
@@ -440,8 +443,109 @@ public final class DirectPasteHandler {
         return s == null ? "" : s;
     }
 
+    /**
+     * Builds the full {@link PasteOptions} from a Litematica placement
+     * compound ({@code SchematicPlacement.toData()} / v1 {@code toNbt()} /
+     * legacy Transmit {@code PlacementData}) — issue #4: honors ReplaceMode,
+     * global Rotation + Mirror, SubRegions overrides, PasteLayerBehavior +
+     * RenderLayerRange, IgnoreEntities, plus our legacy Transmit-path fields
+     * (PlaceEntities / PlaceTileEntities / … / YawRotation) when present.
+     *
+     * <p>Rotation/Mirror accept both wire encodings: v1 sends the enum NAME
+     * as a String, v2 (0.28.5+) the enum ORDINAL as an Int.
+     */
+    PasteOptions parsePlacementOptions(LitematicNbt.NbtCompound payload, Location origin,
+                                       Player player) {
+        PasteOptions defaults = PasteOptions.defaults(origin);
+
+        // Global orientation.
+        PlacementTransform.Rot rotation = PlacementTransform.readRotation(payload, "Rotation");
+        PlacementTransform.Mir mirror   = PlacementTransform.readMirror(payload, "Mirror");
+        // Legacy Transmit-path yaw override (our own field, pre-0.8).
+        Integer yawRotation = payload.getInt("YawRotation");
+        if (yawRotation != null && rotation == PlacementTransform.Rot.NONE) {
+            rotation = PlacementTransform.Rot.fromDegrees(yawRotation);
+        }
+
+        // Replace semantics. Absent field (old v1 clients) keeps the
+        // historical WITH_NON_AIR behavior; a present value is honored
+        // exactly, unknown values fall back to NONE like upstream Servux.
+        ReplaceBehavior replace = ReplaceBehavior.fromString(
+                payload.getString("ReplaceMode"), ReplaceBehavior.WITH_NON_AIR);
+
+        // Layer-limited paste.
+        LayerFilter layerFilter = LayerFilter.fromNbt(
+                payload.getString("PasteLayerBehavior"),
+                payload.getCompound("RenderLayerRange"));
+
+        // Per-sub-region placement overrides.
+        Map<String, SubRegionOverride> subRegions =
+                SubRegionOverride.parseAll(payload.getCompound("SubRegions"));
+
+        // Entity gate: standard IgnoreEntities byte, or legacy PlaceEntities.
+        Byte ignoreEntities = payload.getByte("IgnoreEntities");
+        Byte placeEntitiesB = payload.getByte("PlaceEntities");
+        boolean placeEntities = placeEntitiesB != null ? placeEntitiesB != 0
+                : ignoreEntities == null || ignoreEntities == 0;
+
+        // Legacy Transmit-path toggles (absent on real Litematica clients).
+        Byte placeTileEntities = payload.getByte("PlaceTileEntities");
+        Byte placePendingTicks = payload.getByte("PlacePendingTicks");
+        Byte deferredPhysics   = payload.getByte("DeferredPhysics");
+        Byte observersLast     = payload.getByte("ObserversLast");
+
+        int maxPerTask = plugin.getConfig().getInt("paste.maxBlocksPerChunkTask",
+                defaults.maxBlocksPerChunkTask());
+
+        LOG.info("[direct-paste] placement options for " + player.getName()
+                + ": rot=" + rotation + " mirror=" + mirror + " replace=" + replace
+                + " entities=" + placeEntities
+                + (layerFilter != null ? " " + layerFilter : "")
+                + (subRegions.isEmpty() ? "" : " subRegions=" + subRegions.keySet()));
+
+        return new PasteOptions(
+                origin,
+                placeEntities,
+                placeTileEntities == null ? defaults.placeTileEntities() : placeTileEntities != 0,
+                placePendingTicks == null ? defaults.placePendingTicks() : placePendingTicks != 0,
+                deferredPhysics   == null ? defaults.deferredPhysics()   : deferredPhysics != 0,
+                observersLast     == null ? defaults.observersLast()     : observersLast != 0,
+                maxPerTask,
+                rotation,
+                mirror,
+                replace,
+                layerFilter,
+                subRegions,
+                null);
+    }
+
+    /**
+     * Tell a v2 (0.28.5+) client its Servux Paste task finished so the
+     * InfoHud progress entry it armed on send gets cleared. v1 clients
+     * do not know packet type 16 and would log an "invalid packet type"
+     * warning, so this is gated on the negotiated wire version.
+     */
+    private void sendTaskCompleteSync(Player player) {
+        if (!sessions.isV2(player.getUniqueId())) {
+            return;
+        }
+        try {
+            LitematicNbt.NbtCompound sync = new LitematicNbt.NbtCompound();
+            sync.putByte("InfoHudComplete", (byte) 1);
+            byte[] blob = DataTagCodec.encode(sync);
+            byte[] wire = PacketHandler.buildLitematics(
+                    ProtocolConstants.Litematics.S2C_TASK_STATUS_SYNC,
+                    w -> w.writeRawBytes(blob));
+            player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL_LITEMATICS, wire);
+            LOG.info("[direct-paste] TX S2C_TASK_STATUS_SYNC InfoHudComplete to " + player.getName());
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "task-complete sync failed for " + player.getName(), t);
+        }
+    }
+
     private void reportComplete(Player player, PasteResult res, Throwable err) {
         try {
+            sendTaskCompleteSync(player);
             if (err != null) {
                 LOG.log(Level.WARNING, "direct paste failed for " + player.getName(), err);
                 player.sendMessage("[LitematicaFolia] paste failed: "
@@ -469,30 +573,6 @@ public final class DirectPasteHandler {
             return player.getLocation().clone();
         }
         return new Location(player.getWorld(), x, y, z);
-    }
-
-    private PasteOptions readOptions(LitematicNbt.NbtCompound payload, Location origin) {
-        PasteOptions defaults = PasteOptions.defaults(origin);
-        if (payload == null) {
-            return defaults;
-        }
-        Byte placeEntities      = payload.getByte("PlaceEntities");
-        Byte placeTileEntities  = payload.getByte("PlaceTileEntities");
-        Byte placePendingTicks  = payload.getByte("PlacePendingTicks");
-        Byte deferredPhysics    = payload.getByte("DeferredPhysics");
-        Byte observersLast      = payload.getByte("ObserversLast");
-        Integer yawRotation     = payload.getInt("YawRotation");
-
-        return new PasteOptions(
-                origin,
-                placeEntities      == null ? defaults.placeEntities()      : placeEntities      != 0,
-                placeTileEntities  == null ? defaults.placeTileEntities()  : placeTileEntities  != 0,
-                placePendingTicks  == null ? defaults.placePendingTicks()  : placePendingTicks  != 0,
-                deferredPhysics    == null ? defaults.deferredPhysics()    : deferredPhysics    != 0,
-                observersLast      == null ? defaults.observersLast()      : observersLast      != 0,
-                defaults.maxBlocksPerChunkTask(),
-                yawRotation == null ? defaults.yawRotation() : (yawRotation % 360),
-                null);
     }
 
     // --------------------------------------------------- Transmit session
