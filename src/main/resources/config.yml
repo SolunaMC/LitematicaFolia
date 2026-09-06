@@ -35,11 +35,14 @@ protocol:
   enableServuxBridge: false
   # Channel name. Default matches sakura-ryoko/servux for client compatibility.
   channel: "servux:litematics"
-  # Enable the Easy Place V3 server-side listener (PacketEvents-based).
-  # When a Litematica client sends a ServerboundUseItemOnPacket with the
-  # X-fractional protocol marker, the listener decodes it and overrides
-  # the placed block's facing to match the schematic. No-op for vanilla
-  # clients. Default off until smoke-tested against a real client.
+  # Enable the Easy Place V3 server-side listener. A per-connection Netty
+  # handler (no PacketEvents, nothing shaded) decodes the protocol value a
+  # Litematica client packs into the cursor X of its ServerboundUseItemOnPacket,
+  # lets vanilla place the block, then sets the exact schematic block state
+  # (facing, half, axis, slab type, stairs shape, hinge, rail shape, rotation,
+  # comparator mode, repeater delay, ...). Strict no-op for vanilla clients.
+  # Requires the litematica.easyplace.use permission (default op).
+  # Off by default: canary on Paper 26.3-pre-2, see CHANGELOG 0.8.1.
   enableEasyPlace: false
   # Cap on the reassembled-size of a single Direct Paste upload via the
   # Servux outer-splitter. Default 128 MiB; raise if you expect schematics

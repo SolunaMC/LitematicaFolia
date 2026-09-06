@@ -200,6 +200,95 @@ final class EasyPlaceDecodeTest {
         assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(-100.0f));
         assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(1.0e9f));
     }
+    /**
+     * The Netty handler decodes from a double (hit.x - pos.x). The double
+     * path must agree with the float path on the protocol envelope and must
+     * not let float rounding move the integer part.
+     */
+    @Test
+    void doubleOverload_matchesServuxFormula() {
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(0.5d));
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(1.9999999d));
+        assertEquals(0, EasyPlaceProtocolDecoder.decodeProtocolValue(2.0d));
+        assertEquals(4, EasyPlaceProtocolDecoder.decodeProtocolValue(6.5d));
+        // 6.9999999 as a float rounds to 7.0f (protocol value 5); the double
+        // path must keep the integer part 6 (protocol value 4).
+        assertEquals(4, EasyPlaceProtocolDecoder.decodeProtocolValue(6.9999999d));
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(Double.NaN));
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(Double.POSITIVE_INFINITY));
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(Double.NEGATIVE_INFINITY));
+        assertEquals(-1, EasyPlaceProtocolDecoder.decodeProtocolValue(0x1.0p25));
+    }
+
+    /**
+     * The rewritten packet must carry the client's real raycast fraction so
+     * vanilla's cursor-in-block check passes and blocks that read the click
+     * location (slabs, stairs, trapdoors read Y; X is restored for symmetry)
+     * see what the client saw.
+     */
+    @Test
+    void originalFraction_recoversRaycastX() {
+        assertEquals(0.5d, EasyPlaceProtocolDecoder.originalFraction(6.5d), 1e-9);
+        assertEquals(0.25d, EasyPlaceProtocolDecoder.originalFraction(2.25d), 1e-9);
+        assertEquals(0.0d, EasyPlaceProtocolDecoder.originalFraction(14.0d), 1e-9);
+        assertEquals(0.5d, EasyPlaceProtocolDecoder.originalFraction(Double.NaN), 1e-9);
+        assertEquals(0.5d, EasyPlaceProtocolDecoder.originalFraction(Double.POSITIVE_INFINITY), 1e-9);
+        for (double relX : new double[]{2.0, 2.999, 17.125, 300.75, 16777217.5}) {
+            double f = EasyPlaceProtocolDecoder.originalFraction(relX);
+            assertTrue(f >= 0.0 && f < 1.0, "fraction out of range for " + relX);
+        }
+    }
+
+    /**
+     * Per-property bit widths must equal upstream's
+     * {@code Mth.log2(Mth.smallestEncompassingPowerOfTwo(n))} for every
+     * whitelisted property size in 26.3: booleans (2), half/hinge/
+     * comparator mode (2), axis / slab type / chest type / attach face (3),
+     * bell attachment / delay / golem pose (4), stairs shape (5), the six
+     * directions and straight rail shapes (6), cake bites (7), rail shape
+     * (10), crafter orientation (12), sign rotation (16), notes (25).
+     */
+    @Test
+    void requiredBits_matchesUpstreamFormula() {
+        int[][] expected = {
+                {1, 0}, {2, 1}, {3, 2}, {4, 2}, {5, 3}, {6, 3}, {7, 3}, {8, 3},
+                {10, 4}, {12, 4}, {16, 4}, {17, 5}, {25, 5}, {32, 5}, {33, 6},
+        };
+        for (int[] pair : expected) {
+            assertEquals(pair[1], EasyPlaceProtocolDecoder.requiredBits(pair[0]),
+                    "requiredBits(" + pair[0] + ")");
+        }
+    }
+
+    /**
+     * End-to-end bit walk for a schematic "oak_stairs[facing=east,half=top,
+     * shape=straight,waterlogged=false]" the way the 26.2 client packs it:
+     * direction (east=5) in bits 1..3, then the name-sorted whitelisted
+     * non-direction properties: half (2 values, 1 bit: top=1), shape
+     * (5 values, 3 bits: straight=0); waterlogged is blacklisted and never
+     * transmitted. Decoding must recover the same fields in the same order.
+     */
+    @Test
+    void stairsExample_bitWalkRoundtrips() {
+        int pv = EasyPlaceProtocolDecoder.encodeFacing(0, 5); // east
+        int shift = 4;
+        pv |= 1 << shift;          // half: index 1 (TOP) -> 1 bit
+        shift += EasyPlaceProtocolDecoder.requiredBits(2);
+        pv |= 0 << shift;          // shape: index 0 (STRAIGHT) -> 3 bits
+        shift += EasyPlaceProtocolDecoder.requiredBits(5);
+        assertEquals(8, shift);
+        assertEquals(0x1A, pv);
+
+        float cursor = EasyPlaceProtocolDecoder.encodeProtocolValue(0.5f, pv);
+        int decoded = EasyPlaceProtocolDecoder.decodeProtocolValue((double) cursor);
+        assertEquals(pv, decoded);
+        assertEquals(5, EasyPlaceProtocolDecoder.decodeFacingIndex(decoded));
+        int rest = EasyPlaceProtocolDecoder.consumeFacingBits(decoded);
+        assertEquals(1, rest & 0b1, "half index");
+        rest >>>= 1;
+        assertEquals(0, rest & 0b111, "shape index");
+    }
+
     // Note: the implementation rejects cursorX >= 2^25 (≈ 33.5M) to
     // stay below the 23-bit float mantissa "exact-integer" boundary.
     // Litematica's actual protocol value never exceeds 2^24 in practice

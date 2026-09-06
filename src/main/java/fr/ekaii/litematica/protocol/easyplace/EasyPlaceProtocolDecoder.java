@@ -104,17 +104,52 @@ public final class EasyPlaceProtocolDecoder {
      *         override" (cursorX out of encoding range).
      */
     public static int decodeProtocolValue(float cursorX) {
-        // Guard against pathological floats. (int)Float.NEGATIVE_INFINITY
-        // returns Integer.MIN_VALUE, and Integer.MIN_VALUE - 2 overflows
-        // to a large positive — which would be misinterpreted as a valid
-        // protocol value. The wire format always has cursorX in
-        // [0, 1 << 24 + 1.999] for a real Litematica client, so any
-        // value outside that "sane" envelope is rejected.
-        if (Float.isNaN(cursorX) || cursorX < 2.0f || cursorX >= 0x1.0p25f) {
+        return decodeProtocolValue((double) cursorX);
+    }
+
+    /**
+     * Double-precision variant used by the Netty handler, which sees the
+     * decoded {@code BlockHitResult} location ({@code hit.x - pos.x}) as a
+     * double. Kept separate from the float overload so that no float
+     * rounding (e.g. {@code 6.9999999 -> 7.0f}) can shift the integer part.
+     *
+     * <p>Mirrors Servux: {@code (int) (hitVec.x - pos.x) - 2}, negative
+     * means "no override". Values outside {@code [2, 2^25)} (NaN,
+     * infinities, hostile magnitudes) are rejected so the int cast can
+     * never wrap into a large positive value.
+     */
+    public static int decodeProtocolValue(double relX) {
+        if (Double.isNaN(relX) || relX < 2.0 || relX >= 0x1.0p25) {
             return -1;
         }
-        int protocolValue = (int) cursorX - 2;
+        int protocolValue = (int) relX - 2;
         return protocolValue < 0 ? -1 : protocolValue;
+    }
+
+    /**
+     * The client-side raycast fraction the protocol value was added to:
+     * {@code relX - floor(relX)}, always in {@code [0, 1)}. The rewritten
+     * packet carries this so vanilla sees the real hit and passes its
+     * cursor-in-block sanity check.
+     */
+    public static double originalFraction(double relX) {
+        if (Double.isNaN(relX) || Double.isInfinite(relX)) {
+            return 0.5;
+        }
+        double fraction = relX - Math.floor(relX);
+        return fraction >= 0.0 && fraction < 1.0 ? fraction : 0.5;
+    }
+
+    /**
+     * Number of bits the protocol spends on a property with
+     * {@code valueCount} possible values: {@code ceil(log2(valueCount))},
+     * which is what {@code Mth.log2(Mth.smallestEncompassingPowerOfTwo(n))}
+     * evaluates to upstream (0 for a single value, 1 for booleans, 3 for
+     * the six directions, 4 for the 16 sign rotations, 5 for 25 notes).
+     * Pure twin of the NMS expression, for tests and documentation.
+     */
+    public static int requiredBits(int valueCount) {
+        return valueCount <= 1 ? 0 : 32 - Integer.numberOfLeadingZeros(valueCount - 1);
     }
 
     /**
