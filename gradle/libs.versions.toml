@@ -6,7 +6,7 @@ packetevents = "2.13.0"
 # Plugins
 paperweight-userdev = "2.0.0-SNAPSHOT"
 run-paper = "3.0.2"
-shadow = "9.3.0"
+shadow = "9.6.1"
 
 [libraries]
 luckperms = { group = "net.luckperms", name = "api", version.ref = "luckperms" }
