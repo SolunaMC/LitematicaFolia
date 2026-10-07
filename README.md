@@ -2,7 +2,7 @@
 
 **Server-side Litematica for Paper and Folia.** Load `.litematic` schematics directly on your Minecraft server, paste them with full block-state, tile-entity and entity fidelity, and accept Direct-Paste uploads from vanilla [Litematica](https://github.com/maruohon/litematica) clients via the [Servux](https://github.com/sakura-ryoko/servux) plugin-message protocol: no `/fill` spam, no kick-for-spamming, no `WorldEdit` dependency.
 
-[![release](https://img.shields.io/badge/release-v0.5.1-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases) [![mc](https://img.shields.io/badge/Minecraft-26.2-blue)](https://papermc.io/) [![api](https://img.shields.io/badge/Paper%20API-26.2-blue)](https://papermc.io/) [![folia](https://img.shields.io/badge/Folia-supported-purple)](https://papermc.io/software/folia) [![jdk](https://img.shields.io/badge/JDK-25-orange)](https://openjdk.org/) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+[![release](https://img.shields.io/badge/release-v0.5.1-brightgreen)](https://forgejo.ekaii.fr/admin_ekaii/litematica-folia-ekaii/releases) [![mc](https://img.shields.io/badge/Minecraft-1.21.11%20%7C%2026.1%20%7C%2026.2-blue)](https://papermc.io/) [![api](https://img.shields.io/badge/Paper%20API-1.21-blue)](https://papermc.io/) [![folia](https://img.shields.io/badge/Folia-supported-purple)](https://papermc.io/software/folia) [![jdk](https://img.shields.io/badge/JDK-21%2B-orange)](https://openjdk.org/) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 > First Paper/Folia plugin to natively parse and paste `.litematic`. Replaces the legacy Litematica `/setblock` + `/fill` fallback (slow, lossy, kick-prone) with a real server-side pipeline.
 
@@ -51,12 +51,12 @@ Requirements:
 
 | | |
 |---|---|
-| Server | Paper 26.2 (or any fork: Folia, Luminol/Lophine, Leaves, Purpur 26.2+); for 26.1.x use the 0.4.x releases |
-| Java | JDK 25 |
-| API version | 26.2 |
+| Server | Paper 1.21.11, 26.1.x or 26.2.x (or any fork: Folia, Luminol/Lophine, Leaves, Purpur); one jar for all three |
+| Java | 21+ on 1.21.11, 25 on 26.x (what the server itself needs); building needs JDK 25 |
+| API version | 1.21 |
 | Optional | LuckPerms (perm gating), FastAsyncWorldEdit (future ClipboardFormat adapter) |
 
-> **Version gate (since 0.6.1)**: Bukkit does not stop a too-new plugin from loading, so on anything that is not Minecraft 26.2 the plugin now logs a SEVERE and disables itself instead of running blind. **1.21.x servers (including Leaves 1.21.11) are not supported by any release**: 0.5+/0.6 target 26.2 and 0.4.x targets 26.1.x. Running the 26.2 build on a 1.21.11 server used to inject a mismatched packet pipeline into every connection and could break all client joins (issue #3).
+> **Version gate**: Bukkit does not stop a too-new plugin from loading, so on anything other than Minecraft 1.21.11, 26.1.x or 26.2.x the plugin logs a SEVERE and disables itself instead of running blind (a mismatched packet pipeline once broke every client join, issue #3). Since 0.10.0 one jar covers all three lines: the server-internal (NMS) calls compile to identical bytecode against the 1.21.11, 26.1.2 and 26.2 dev bundles, which the build can re-check with `./gradlew -PdevBundle=<bundle> test`.
 
 ## Client setup: Litematica Direct Paste
 

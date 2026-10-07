@@ -39,7 +39,9 @@ import java.util.LinkedHashMap;
 import java.util.logging.Logger;
 
 /**
- * Paper 26.2 NMS bridge implementation. Depends on mojang-mapped
+ * Paper NMS bridge for 1.21.11, 26.1.x and 26.2 (the class name predates
+ * multi-version support; its calls compile to the same bytecode against
+ * all three dev bundles). Depends on mojang-mapped
  * {@code net.minecraft.*} classes via paperweight-userdev.
  *
  * <p>All public methods are designed to be called from the chunk's owning

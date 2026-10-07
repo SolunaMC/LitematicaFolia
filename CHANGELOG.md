@@ -2,6 +2,27 @@
 
 All notable changes to LitematicaFolia. Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a `+<mc-version>` suffix.
 
+## 0.10.0+1.21.11-26.2 - 2026-10-07
+
+### Changed - one jar for Minecraft 1.21.11, 26.1.x and 26.2.x
+
+- **Version gate** accepts `1.21.11`, `26.1` / `26.1.x` and `26.2` /
+  `26.2.x`; everything else still disables the plugin on enable.
+- **Java 21 bytecode** (`options.release = 21`) so the jar loads on
+  1.21.11 servers; still built with JDK 25 against the 26.2 dev bundle.
+  `api-version` is `1.21`.
+- **Verified by bytecode comparison**: the sources compile against the
+  `1.21.11-R0.1-SNAPSHOT`, `26.1.2.build.53-stable` and
+  `26.2.build.111-stable` dev bundles, all unit tests pass on each, and
+  the disassembled classes are identical across the three. Two Easy Place
+  call sites had to change for that: `CraftBlock.setBlockState` (different
+  signature before 26.2) is replaced by an equivalent `Level#setBlock`
+  with the same update flags, and `BlockState#is(Block)` (generic since
+  26.1) by a `getBlock()` comparison.
+- `-PdevBundle=<bundle>` selects the dev bundle, for re-checking another
+  Minecraft line.
+- Not yet tested on a live 1.21.11 or 26.1.x server.
+
 ## 0.8.1+26.2 - 2026-10-07
 
 Port of the Easy Place rework from the `0.8.1+26.3-pre2` canary back to the

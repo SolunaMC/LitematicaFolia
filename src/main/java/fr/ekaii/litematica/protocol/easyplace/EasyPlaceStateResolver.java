@@ -20,7 +20,7 @@ import java.util.Set;
 
 /**
  * Server-side decoder of the Litematica <strong>Easy Place V3</strong>
- * protocol value into a concrete {@link BlockState}, on Paper 26.2 NMS.
+ * protocol value into a concrete {@link BlockState}, on Paper 1.21.11 to 26.2 NMS.
  *
  * <h2>Wire contract (interoperability facts, not copied code)</h2>
  * The client packs, into the X-fractional of the cursor position of a

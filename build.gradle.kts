@@ -6,10 +6,14 @@ plugins {
 }
 
 group = "fr.ekaii.litematica"
-version = "0.8.1+26.2"
+version = "0.10.0+1.21.11-26.2"
 description = "Server-side Litematica for Paper/Folia: parses .litematic and pastes via RegionScheduler"
 
 java {
+    // Compiled with JDK 25 against the 26.x dev bundle, but emitted as Java 21
+    // bytecode so the same jar loads on 1.21.11 servers (Java 21). The 26.x
+    // dev bundle declares JVM 25, so Gradle's target-JVM check is disabled.
+    disableAutoTargetJvm()
     toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
@@ -32,7 +36,10 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("26.2.build.111-stable")
+    // One jar for 1.21.11, 26.1.x and 26.2: the NMS calls compile to the
+    // same bytecode against all three dev bundles. Check another version with
+    // ./gradlew -PdevBundle=1.21.11-R0.1-SNAPSHOT (or 26.1.2.build.53-stable) test
+    paperweight.paperDevBundle(providers.gradleProperty("devBundle").getOrElse("26.2.build.111-stable"))
     compileOnly(libs.luckperms)
     // Optional runtime hook. CoreProtect is supplied by the server and is
     // never bundled into the plugin jar.
@@ -54,7 +61,7 @@ tasks {
     }
     compileJava {
         options.encoding = Charsets.UTF_8.name()
-        options.release.set(25)
+        options.release.set(21)
     }
     javadoc {
         options.encoding = Charsets.UTF_8.name()
@@ -65,7 +72,7 @@ tasks {
             "name" to project.name,
             "version" to project.version,
             "description" to project.description,
-            "apiVersion" to "26.2"
+            "apiVersion" to "1.21"
         )
         inputs.properties(props)
         filesMatching(listOf("plugin.yml", "paper-plugin.yml")) {

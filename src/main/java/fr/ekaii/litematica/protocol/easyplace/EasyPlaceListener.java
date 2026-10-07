@@ -15,7 +15,6 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.craftbukkit.CraftWorld;
-import org.bukkit.craftbukkit.block.CraftBlock;
 import org.bukkit.craftbukkit.block.data.CraftBlockData;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.entity.Player;
@@ -36,7 +35,7 @@ import java.util.logging.Logger;
 
 /**
  * Server-side <strong>Litematica Easy Place V3</strong> without PacketEvents
- * or mixins, on Paper / Folia 26.2.
+ * or mixins, on Paper / Folia 1.21.11 to 26.2.
  *
  * <h2>Pipeline</h2>
  * <ol>
@@ -289,7 +288,7 @@ public final class EasyPlaceListener implements Listener {
             ServerLevel level = ((CraftWorld) placed.getWorld()).getHandle();
             BlockPos pos = new BlockPos(placed.getX(), placed.getY(), placed.getZ());
             BlockState current = level.getBlockState(pos);
-            if (applyPhysics && !current.is(((CraftBlockData) placed.getBlockData()).getState().getBlock())) {
+            if (applyPhysics && current.getBlock() != ((CraftBlockData) placed.getBlockData()).getState().getBlock()) {
                 // Deferred path only: the block changed between the event and
                 // this tick (broken, replaced); do not touch it.
                 return;
@@ -298,7 +297,7 @@ public final class EasyPlaceListener implements Listener {
             // Two-block-tall blocks: always operate on the lower half.
             if (current.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
                     && current.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER
-                    && level.getBlockState(pos.below()).is(current.getBlock())) {
+                    && level.getBlockState(pos.below()).getBlock() == current.getBlock()) {
                 pos = pos.below();
                 current = level.getBlockState(pos);
             }
@@ -312,16 +311,16 @@ public final class EasyPlaceListener implements Listener {
                 return;
             }
 
-            CraftBlock.setBlockState(level, pos, resolved, applyPhysics);
+            setState(level, pos, resolved, applyPhysics);
 
             if (resolved.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) {
                 BlockPos otherPos = resolved.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER
                         ? pos.above() : pos.below();
                 BlockState other = level.getBlockState(otherPos);
-                if (other.is(resolved.getBlock())) {
+                if (other.getBlock() == resolved.getBlock()) {
                     BlockState otherNew = EasyPlaceStateResolver.copyForOtherHalf(resolved, other);
                     if (otherNew != other) {
-                        CraftBlock.setBlockState(level, otherPos, otherNew, applyPhysics);
+                        setState(level, otherPos, otherNew, applyPhysics);
                     }
                 }
             }
@@ -333,6 +332,23 @@ public final class EasyPlaceListener implements Listener {
             LOG.log(Level.WARNING, "easy-place override failed at " + placed.getX() + "," + placed.getY()
                     + "," + placed.getZ(), t);
         }
+    }
+
+    /**
+     * Same-block state change with CraftBukkit's update semantics. Replaces
+     * {@code CraftBlock.setBlockState}, whose signature differs between
+     * 1.21.11 / 26.1.x (with an old-state argument) and 26.2; the flag
+     * values are identical on all three.
+     */
+    private static void setState(ServerLevel level, BlockPos pos, BlockState state, boolean applyPhysics) {
+        int flags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS;
+        if (applyPhysics) {
+            flags |= net.minecraft.world.level.block.Block.UPDATE_NEIGHBORS;
+        } else {
+            flags |= net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE
+                    | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE;
+        }
+        level.setBlock(pos, state, flags);
     }
 
     private static String describe(BlockState state) {

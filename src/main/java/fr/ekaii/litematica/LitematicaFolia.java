@@ -32,15 +32,18 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
 
     /**
      * This build drives NMS through NmsBridge26_2 and injects a Netty handler
-     * that reads 26.2 packet records, so it must refuse to run anywhere else.
-     * Bukkit's api-version does NOT reject a plugin NEWER than the server
-     * (Paper and Leaves 1.21.11 both enable this 26.2 build without a
-     * complaint), and a version-mismatched packet pipeline corrupts client
-     * connections instead of failing cleanly (issue #3: every join on a
-     * Leaves 1.21.11 server died on a garbage clientbound packet).
+     * on the server's own packet classes. Their bytecode is identical when
+     * compiled against the 1.21.11, 26.1.2 and 26.2 dev bundles, so those
+     * lines are supported; anything else is refused. Bukkit's api-version
+     * does NOT reject a plugin NEWER than the server, and a mismatched NMS
+     * or packet pipeline corrupts client connections instead of failing
+     * cleanly (issue #3: every join on a Leaves 1.21.11 server died on a
+     * garbage clientbound packet), hence the hard gate.
      */
     private static boolean isSupportedServerVersion(String mc) {
-        return mc.equals("26.2") || mc.startsWith("26.2.");
+        return mc.equals("1.21.11")
+                || mc.equals("26.1") || mc.startsWith("26.1.")
+                || mc.equals("26.2") || mc.startsWith("26.2.");
     }
 
     @Override
@@ -48,8 +51,8 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         supportedServer = isSupportedServerVersion(getServer().getMinecraftVersion());
         if (!supportedServer) {
             getLogger().severe("Unsupported Minecraft version " + getServer().getMinecraftVersion()
-                    + ": this build supports 26.2 only. Use the 0.4.x releases for 26.1.x;"
-                    + " 1.21.x and older are not supported at all. The plugin will disable itself on enable.");
+                    + ": this build supports 1.21.11, 26.1.x and 26.2.x only."
+                    + " The plugin will disable itself on enable.");
         }
     }
 
@@ -58,8 +61,7 @@ public final class LitematicaFolia extends JavaPlugin implements Listener {
         if (!supportedServer) {
             getLogger().severe("LitematicaFolia " + getPluginMeta().getVersion()
                     + " does not support Minecraft " + getServer().getMinecraftVersion()
-                    + ". Supported: 26.2 (this build). For 26.1.x use the 0.4.x releases;"
-                    + " 1.21.x and older are unsupported. Disabling to avoid breaking client"
+                    + ". Supported: 1.21.11, 26.1.x and 26.2.x. Disabling to avoid breaking client"
                     + " connections.");
             getServer().getPluginManager().disablePlugin(this);
             return;
