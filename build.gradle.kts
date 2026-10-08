@@ -43,7 +43,7 @@ dependencies {
     compileOnly(libs.luckperms)
     // Optional runtime hook. CoreProtect is supplied by the server and is
     // never bundled into the plugin jar.
-    compileOnly("net.coreprotect:coreprotect:24.0")
+    compileOnly("net.coreprotect:coreprotect:24.1")
     // Easy Place V3 is a direct Netty handler on the server's own packet
     // classes (dev bundle): no PacketEvents, nothing shaded (issue #5).
     // FAWE compileOnly deps disabled — see repository block above.
@@ -96,6 +96,6 @@ tasks {
 
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    testImplementation("net.coreprotect:coreprotect:24.0")
+    testImplementation("net.coreprotect:coreprotect:24.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
