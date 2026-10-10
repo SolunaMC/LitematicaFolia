@@ -1,6 +1,6 @@
 [versions]
 luckperms = "5.4"
-fawe = "2.14.0-SNAPSHOT"
+fawe = "2.16.1"
 
 # Plugins
 paperweight-userdev = "2.0.0-SNAPSHOT"
