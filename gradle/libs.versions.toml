@@ -4,7 +4,7 @@ fawe = "2.14.0-SNAPSHOT"
 
 # Plugins
 paperweight-userdev = "2.0.0-SNAPSHOT"
-run-paper = "3.0.2"
+run-paper = "3.1.0"
 shadow = "9.3.0"
 
 [libraries]
